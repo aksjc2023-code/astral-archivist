@@ -38,30 +38,26 @@ export interface OfflineAudioContextLike {
 }
 
 /**
- * Applies a 2-pole Butterworth low-pass anti-aliasing filter to prevent spectral folding
- * when downsampling to a lower sample rate.
+ * Applies a 4-pole Butterworth low-pass anti-aliasing filter (two cascaded biquad stages)
+ * to deliver steep stopband rolloff (>20dB at stopband frequencies) while preserving
+ * passband audio fidelity when downsampling to a lower sample rate.
  */
-function applyButterworthLowPass(
+function applyBiquadStage(
   data: Float32Array,
   sampleRate: number,
-  cutoffHz: number
+  cutoffHz: number,
+  q: number
 ): Float32Array {
-  if (data.length === 0 || cutoffHz >= sampleRate / 2) {
-    return new Float32Array(data);
-  }
-
-  // Pre-warp digital cutoff frequency
   const omega = Math.tan((Math.PI * cutoffHz) / sampleRate);
   const omega2 = omega * omega;
-  const sqrt2 = Math.SQRT2;
+  const alpha = omega / q;
 
-  // Normalized biquad filter coefficients
-  const a0 = 1 + sqrt2 * omega + omega2;
+  const a0 = 1 + alpha + omega2;
   const b0 = omega2 / a0;
   const b1 = (2 * omega2) / a0;
   const b2 = omega2 / a0;
   const a1 = (2 * (omega2 - 1)) / a0;
-  const a2 = (1 - sqrt2 * omega + omega2) / a0;
+  const a2 = (1 - alpha + omega2) / a0;
 
   const output = new Float32Array(data.length);
   let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
@@ -79,6 +75,23 @@ function applyButterworthLowPass(
   }
 
   return output;
+}
+
+export function applyButterworthLowPass(
+  data: Float32Array,
+  sampleRate: number,
+  cutoffHz: number
+): Float32Array {
+  if (data.length === 0 || cutoffHz >= sampleRate / 2) {
+    return new Float32Array(data);
+  }
+
+  // 4th-order Butterworth Q factors for 2 cascaded biquads
+  const q1 = 1 / (2 * Math.cos(Math.PI / 8)); // ~0.541196
+  const q2 = 1 / (2 * Math.cos((3 * Math.PI) / 8)); // ~1.306563
+
+  const pass1 = applyBiquadStage(data, sampleRate, cutoffHz, q1);
+  return applyBiquadStage(pass1, sampleRate, cutoffHz, q2);
 }
 
 /**
@@ -111,7 +124,7 @@ export function resamplePcmTo16kHz(
   let filteredData = inputData;
   if (inputSampleRate > targetSampleRate) {
     const nyquist = targetSampleRate / 2;
-    const filterCutoff = nyquist * 0.90; // 7.2kHz cutoff for 16kHz target
+    const filterCutoff = Math.min(7000, nyquist * 0.90); // 7.0kHz cutoff for steep stopband rolloff
     filteredData = applyButterworthLowPass(inputData, inputSampleRate, filterCutoff);
   }
 
@@ -245,7 +258,7 @@ export type WhisperRunnerFactory = (
  */
 export function isWebGpuHardwareError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /webgpu|device[\s._-]?lost|adapter|vram|out of memory|shader compilation|hardware acceleration/i.test(message);
+  return /webgpu|device[\s._-]?lost|adapter|vram|out of memory|shader compilation|hardware acceleration|navigator\.gpu|not supported/i.test(message);
 }
 
 export class OfflineWhisperEngine {
@@ -271,12 +284,12 @@ export class OfflineWhisperEngine {
    * Transcribes normalized 16kHz mono audio PCM with device-aware runner factory
    * and self-healing WebGPU fallback.
    *
-   * If a runnerFactory is provided and WebGPU encounters hardware context loss,
-   * it builds a dedicated WASM runner and automatically re-executes.
+   * Runner creation is executed inside the try-catch block so that WebGPU
+   * initialization / adapter-creation failures automatically trigger WASM fallback.
    */
   public async transcribe(
     audioPcm: Float32Array,
-    runnerOrFactory: WhisperPipelineRunner | WhisperRunnerFactory,
+    runnerFactory: WhisperRunnerFactory,
     mediaId?: string,
     onFallback?: (fromDevice: string, toDevice: string, error: unknown) => void
   ): Promise<{ tokens: WordToken[]; rawText: string; deviceUsed: string }> {
@@ -284,20 +297,8 @@ export class OfflineWhisperEngine {
       return { tokens: [], rawText: '', deviceUsed: this.activeDevice };
     }
 
-    const getRunner = async (device: 'webgpu' | 'wasm' | 'cpu'): Promise<WhisperPipelineRunner> => {
-      if (typeof runnerOrFactory === 'function') {
-        const result = (runnerOrFactory as WhisperRunnerFactory)(device);
-        if (typeof result === 'function') {
-          return result;
-        }
-        return await result;
-      }
-      return runnerOrFactory;
-    };
-
-    let runner = await getRunner(this.activeDevice);
-
     try {
+      const runner = await runnerFactory(this.activeDevice);
       const output = await runner(audioPcm, {
         return_timestamps: 'word',
         chunk_length_s: this.config.chunkLengthSec,
@@ -319,9 +320,9 @@ export class OfflineWhisperEngine {
         this.activeDevice = 'wasm';
 
         // Re-obtain a pipeline runner specifically instantiated for the WASM device
-        runner = await getRunner('wasm');
+        const fallbackRunner = await runnerFactory('wasm');
 
-        const fallbackOutput = await runner(audioPcm, {
+        const fallbackOutput = await fallbackRunner(audioPcm, {
           return_timestamps: 'word',
           chunk_length_s: this.config.chunkLengthSec,
           stride_length_s: this.config.strideLengthSec,

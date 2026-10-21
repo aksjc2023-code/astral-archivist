@@ -61,8 +61,8 @@ export function tagLexicalFillers(tokens: WordToken[]): WordToken[] {
 
     for (const phrase of MULTI_WORD_FILLER_PHRASES) {
       if (phrase[0] === w1 && phrase[1] === w2) {
-        t1.isFiller = true;
-        t2.isFiller = true;
+        t1.isDiscourseMarker = true;
+        t2.isDiscourseMarker = true;
         break;
       }
     }
@@ -105,7 +105,7 @@ export function injectSyntheticPauseTokens(
           if (cuttableDuration >= 0.15) {
             result.push({
               id: `pause_${current.mediaId ? `${current.mediaId}_` : ''}${pauseCounter++}`,
-              text: `[${rawGap.toFixed(2)}s pause]`,
+              text: `[${cuttableDuration.toFixed(2)}s pause]`,
               start: asSourceSeconds(Number(paddedStart.toFixed(3))),
               end: asSourceSeconds(Number(paddedEnd.toFixed(3))),
               deleted: false,

@@ -10,11 +10,17 @@ import {
   OfflineWhisperEngine,
   decodeAndResampleTo16kHzMono,
   AudioBufferLike,
+  OfflineAudioContextLike,
 } from '@astral/core';
 
 export interface TranscribeProgressCallback {
   (status: string, percent?: number): void;
 }
+
+export const MAX_MEDIA_FILE_BYTES = 750 * 1024 * 1024; // 750 MB pre-flight safety limit
+
+// Pipeline cache to avoid redownloading or re-instantiating models across transcriptions
+const pipelineCache = new Map<string, any>();
 
 /**
  * Extracts raw audio from a media File/Blob and resamples to 16kHz Mono Float32 PCM.
@@ -23,6 +29,11 @@ export async function extract16kHzPcmFromMedia(
   fileOrBlob: Blob,
   onProgress?: (msg: string) => void
 ): Promise<Float32Array> {
+  if (fileOrBlob.size > MAX_MEDIA_FILE_BYTES) {
+    const sizeMb = (fileOrBlob.size / (1024 * 1024)).toFixed(1);
+    throw new Error(`Media file exceeds 750MB limit (${sizeMb} MB). Please choose a smaller file.`);
+  }
+
   onProgress?.('Decoding audio stream to 16kHz mono...');
   const arrayBuffer = await fileOrBlob.arrayBuffer();
 
@@ -30,15 +41,7 @@ export async function extract16kHzPcmFromMedia(
     arrayBuffer,
     () => new window.AudioContext(),
     (channels, length, sampleRate) =>
-      new window.OfflineAudioContext(channels, length, sampleRate) as unknown as {
-        createBufferSource(): {
-          buffer: AudioBufferLike | null;
-          connect(destination: unknown): void;
-          start(when?: number): void;
-        };
-        destination: unknown;
-        startRendering(): Promise<AudioBufferLike>;
-      }
+      new window.OfflineAudioContext(channels, length, sampleRate) as unknown as OfflineAudioContextLike
   );
 }
 
@@ -50,26 +53,39 @@ export async function transcribeMediaFile(
   mediaId: string,
   onProgress?: TranscribeProgressCallback
 ): Promise<{ tokens: WordToken[]; rawText: string; deviceUsed: string }> {
+  if (fileOrBlob.size > MAX_MEDIA_FILE_BYTES) {
+    const sizeMb = (fileOrBlob.size / (1024 * 1024)).toFixed(1);
+    throw new Error(`Media file exceeds 750MB limit (${sizeMb} MB). Please choose a smaller file.`);
+  }
+
   onProgress?.('Extracting and downsampling audio...');
   const pcm = await extract16kHzPcmFromMedia(fileOrBlob, msg => onProgress?.(msg));
 
   onProgress?.('Initializing WebGPU Whisper Pipeline...');
+  const modelId = 'onnx-community/whisper-tiny.en';
+  const dtype = 'q8';
   const engine = new OfflineWhisperEngine({
-    modelId: 'onnx-community/whisper-tiny.en',
+    modelId,
     preferredDevice: 'webgpu',
-    dtype: 'q8',
+    dtype,
     chunkLengthSec: 30,
     strideLengthSec: 5,
   });
 
   const runnerFactory = async (device: 'webgpu' | 'wasm' | 'cpu') => {
-    onProgress?.(`Loading Whisper model (${device.toUpperCase()})...`);
-    const { pipeline } = await import('@huggingface/transformers');
+    const cacheKey = `${modelId}:${device}:${dtype}`;
+    let asrPipeline = pipelineCache.get(cacheKey);
 
-    const asrPipeline = await pipeline('automatic-speech-recognition', 'onnx-community/whisper-tiny.en', {
-      device,
-      dtype: 'q8',
-    });
+    if (!asrPipeline) {
+      onProgress?.(`Loading Whisper model (${device.toUpperCase()})...`);
+      const { pipeline } = await import('@huggingface/transformers');
+
+      asrPipeline = await pipeline('automatic-speech-recognition', modelId, {
+        device,
+        dtype,
+      });
+      pipelineCache.set(cacheKey, asrPipeline);
+    }
 
     return async (audioPcm: Float32Array, options: { return_timestamps: 'word' | boolean; chunk_length_s: number; stride_length_s: number }) => {
       onProgress?.('Transcribing speech segments...');

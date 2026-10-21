@@ -43,9 +43,11 @@ test('2. Hard fillers vs discourse markers and multi-word phrase matching', () =
   assert.equal(tagged[2]?.isDiscourseMarker, true);
   assert.equal(tagged[2]?.isFiller, undefined);
 
-  // "you" + "know" phrase matching tags both tokens as fillers
-  assert.equal(tagged[4]?.isFiller, true);
-  assert.equal(tagged[5]?.isFiller, true);
+  // "you" + "know" multi-word phrase matching tags both tokens as discourse markers
+  assert.equal(tagged[4]?.isDiscourseMarker, true);
+  assert.equal(tagged[5]?.isDiscourseMarker, true);
+  assert.equal(tagged[4]?.isFiller, undefined);
+  assert.equal(tagged[5]?.isFiller, undefined);
 });
 
 test('3. Pause tokens inject 120ms acoustic breathing room and enforce strict mediaId', () => {
@@ -66,6 +68,7 @@ test('3. Pause tokens inject 120ms acoustic breathing room and enforce strict me
   assert.equal(pauseTok?.start, 1.12);
   assert.equal(pauseTok?.end, 1.88);
   assert.equal(Number((pauseTok?.end - pauseTok?.start).toFixed(2)), 0.76);
+  assert.equal(pauseTok?.text, '[0.76s pause]');
 
   // Verify no pause between World (asset_1) and Cut (asset_2)
   assert.equal(result[3]?.id, '3');
@@ -115,6 +118,19 @@ test('5. Resample PCM with anti-aliasing preserves 440Hz tone and rejects invali
     if (val > maxAmp) maxAmp = val;
   }
   assert.ok(maxAmp > 0.85, `Passband amplitude was ${maxAmp}, expected > 0.85`);
+
+  // Generate 11kHz sine wave sampled at 48kHz (should be attenuated >16dB by 4-pole cascaded anti-aliasing filter)
+  const input11k = new Float32Array(sampleRate);
+  for (let i = 0; i < input11k.length; i++) {
+    input11k[i] = Math.sin((2 * Math.PI * 11000 * i) / sampleRate);
+  }
+  const resampled11k = resamplePcmTo16kHz(input11k, sampleRate, 16000);
+  let maxAmp11k = 0;
+  for (let i = 1000; i < 2000; i++) {
+    const val = Math.abs(resampled11k[i] ?? 0);
+    if (val > maxAmp11k) maxAmp11k = val;
+  }
+  assert.ok(maxAmp11k < 0.15, `Stopband 11kHz amplitude was ${maxAmp11k}, expected < 0.15 (>16dB attenuation)`);
 });
 
 test('6. Timestamp monotonicity alignment rejects empty chunks and clamps out-of-order timestamps', () => {
@@ -136,6 +152,7 @@ test('6. Timestamp monotonicity alignment rejects empty chunks and clamps out-of
 test('7. Device-aware Whisper runner factory and GPU-error specific fallback', async () => {
   assert.equal(isWebGpuHardwareError(new Error('WebGPU adapter returned null')), true);
   assert.equal(isWebGpuHardwareError(new Error('GPU device lost')), true);
+  assert.equal(isWebGpuHardwareError(new Error('navigator.gpu not supported')), true);
   assert.equal(isWebGpuHardwareError(new Error('Invalid PCM input buffer')), false);
 
   const engine = new OfflineWhisperEngine({ preferredDevice: 'webgpu' });
@@ -158,6 +175,25 @@ test('7. Device-aware Whisper runner factory and GPU-error specific fallback', a
   assert.deepEqual(devicesRequested, ['webgpu', 'wasm']);
   assert.equal(result.deviceUsed, 'wasm');
   assert.equal(result.tokens[0]?.text, 'WASM');
+
+  // Verify that errors during factory initialization on webgpu trigger wasm fallback
+  const initDevicesRequested: string[] = [];
+  const initFailFactory = (device: 'webgpu' | 'wasm' | 'cpu') => {
+    initDevicesRequested.push(device);
+    if (device === 'webgpu') {
+      throw new Error('navigator.gpu is not supported in this browser environment');
+    }
+    return async (_pcm: Float32Array) => ({
+      text: 'Fallback succeeded from factory init',
+      chunks: [{ text: 'InitFallback', timestamp: [0.0, 0.4] as [number, number] }],
+    });
+  };
+
+  const engineInit = new OfflineWhisperEngine({ preferredDevice: 'webgpu' });
+  const initResult = await engineInit.transcribe(new Float32Array(16000), initFailFactory, 'asset_init');
+  assert.deepEqual(initDevicesRequested, ['webgpu', 'wasm']);
+  assert.equal(initResult.deviceUsed, 'wasm');
+  assert.equal(initResult.tokens[0]?.text, 'InitFallback');
 
   // Verify non-GPU errors are NOT masked and do not trigger fallback
   const failingFactory = () => {
