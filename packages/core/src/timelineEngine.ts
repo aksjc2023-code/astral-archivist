@@ -74,7 +74,7 @@ export function buildPlaybackSegments(
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (!t) continue;
-    if (targetMediaId && t.mediaId && t.mediaId !== targetMediaId) {
+    if (targetMediaId && t.mediaId !== targetMediaId) {
       continue;
     }
     if (Number.isFinite(t.start) && Number.isFinite(t.end) && t.end > t.start) {

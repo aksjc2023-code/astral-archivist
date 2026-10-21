@@ -208,9 +208,10 @@ test('8. Asset-scoped ripple segments isolates cuts per media asset', () => {
     { id: 'a1_w2', mediaId: 'asset_1', text: 'Asset1 Cut', start: asSourceSeconds(2), end: asSourceSeconds(4), deleted: true },
     { id: 'a1_w3', mediaId: 'asset_1', text: 'Asset1 Keep2', start: asSourceSeconds(4), end: asSourceSeconds(6), deleted: false },
     { id: 'a2_w1', mediaId: 'asset_2', text: 'Asset2 Keep', start: asSourceSeconds(0), end: asSourceSeconds(5), deleted: false },
+    { id: 'untagged_w1', text: 'Untagged Legacy', start: asSourceSeconds(10), end: asSourceSeconds(12), deleted: false },
   ];
 
-  // Scoped to asset_1: reflects the cut interval
+  // Scoped to asset_1: reflects the cut interval and excludes untagged tokens
   const res1 = buildPlaybackSegments(multiAssetTokens, 'asset_1');
   assert.equal(res1.segments.length, 2);
   assert.equal(res1.segments[0]?.mediaId, 'asset_1');
@@ -219,11 +220,17 @@ test('8. Asset-scoped ripple segments isolates cuts per media asset', () => {
   assert.equal(res1.segments[1]?.sourceStart, 4);
   assert.equal(res1.segments[1]?.sourceEnd, 6);
 
-  // Scoped to asset_2: unaffected by asset_1 cuts
+  // Scoped to asset_2: unaffected by asset_1 cuts, excludes untagged tokens
   const res2 = buildPlaybackSegments(multiAssetTokens, 'asset_2');
   assert.equal(res2.segments.length, 1);
   assert.equal(res2.segments[0]?.mediaId, 'asset_2');
   assert.equal(res2.segments[0]?.sourceStart, 0);
   assert.equal(res2.segments[0]?.sourceEnd, 5);
+
+  // Unscoped: includes all valid tokens including legacy untagged tokens
+  const resGlobal = buildPlaybackSegments(multiAssetTokens);
+  assert.equal(resGlobal.segments.length, 2);
+  assert.equal(resGlobal.segments[1]?.sourceStart, 10);
+  assert.equal(resGlobal.segments[1]?.sourceEnd, 12);
 });
 

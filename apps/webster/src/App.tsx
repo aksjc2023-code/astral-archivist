@@ -89,8 +89,25 @@ export const App: React.FC = () => {
   // Retain starting clips during drag to support pristine undo/redo
   const dragStartClipsRef = useRef<TimelineClip[] | null>(null);
 
-  // Retain all allocated blob URLs to cleanly revoke on delete/unmount
+  // Retain all allocated blob URLs to cleanly revoke when no longer referenced anywhere
   const blobUrlsRef = useRef<Set<string>>(new Set());
+
+  // Safe revocation helper: only revoke blob URL when no asset and no remaining clip references it
+  const safelyRevokeBlobUrl = useCallback((
+    urlToRevoke: string,
+    remainingClips: TimelineClip[],
+    currentAssets: MediaAsset[]
+  ) => {
+    if (!urlToRevoke || !urlToRevoke.startsWith('blob:')) return;
+    const isUsedInClips = remainingClips.some(c => c.videoUrl === urlToRevoke);
+    const isUsedInAssets = currentAssets.some(a => a.videoUrl === urlToRevoke || a.thumbnailUrl === urlToRevoke);
+    if (!isUsedInClips && !isUsedInAssets) {
+      try {
+        URL.revokeObjectURL(urlToRevoke);
+        blobUrlsRef.current.delete(urlToRevoke);
+      } catch {}
+    }
+  }, []);
 
   // Cleanup all allocated blob URLs on unmount
   useEffect(() => {
@@ -241,6 +258,11 @@ export const App: React.FC = () => {
       return;
     }
 
+    if (trackStates[targetClip.trackId]?.locked) {
+      alert('Cannot split clips on a locked track. Please unlock the track first.');
+      return;
+    }
+
     pushHistory(tokens, clips);
 
     const clipStart = targetClip.timelineStart ?? targetClip.sourceStart ?? asTimelineSeconds(0);
@@ -294,10 +316,14 @@ export const App: React.FC = () => {
     });
 
     setSelectedClipId(clipB.id);
-  }, [clips, currentTime, pushHistory, tokens]);
+  }, [clips, currentTime, pushHistory, tokens, trackStates]);
 
-  // Trim clip edges (interactive yellow handles)
+  // Trim clip edges (interactive yellow handles) with track-lock check and collision awareness
   const handleTrimClip = useCallback((clipId: string, side: 'left' | 'right', deltaSec: number) => {
+    const target = clips.find(c => c.id === clipId);
+    if (!target) return;
+    if (trackStates[target.trackId]?.locked) return;
+
     pushHistory(tokens, clips);
     setClips(prev => prev.map(c => {
       if (c.id !== clipId) return c;
@@ -306,11 +332,34 @@ export const App: React.FC = () => {
       const curIn = c.sourceIn ?? asSourceSeconds(0);
       const curOut = c.sourceOut ?? asSourceSeconds(curIn + curDur);
 
+      // Identify sibling clips on the same track to prevent trim collisions
+      const siblings = prev.filter(s => s.trackId === c.trackId && s.id !== clipId);
+      const siblingsBefore = siblings.filter(s => {
+        const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+        return sStart < curStart;
+      });
+      const siblingsAfter = siblings.filter(s => {
+        const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+        return sStart > curStart;
+      });
+
+      const maxPrevEnd = siblingsBefore.length > 0
+        ? Math.max(0, ...siblingsBefore.map(s => {
+            const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+            const sDur = s.timelineDuration ?? s.duration ?? asSeconds(0);
+            return sStart + sDur;
+          }))
+        : 0;
+
+      const minNextStart = siblingsAfter.length > 0
+        ? Math.min(...siblingsAfter.map(s => s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0)))
+        : Infinity;
+
       if (side === 'left') {
         const maxDelta = curDur - 0.5; // Min duration 0.5s
-        // Guard against negative start AND negative sourceIn!
-        const maxLeftExtension = Math.min(curStart, curIn);
-        const appliedDelta = Math.max(-maxLeftExtension, Math.min(maxDelta, deltaSec));
+        // Guard against extending past previous sibling boundary AND negative sourceIn!
+        const maxLeftExtension = Math.min(curStart - maxPrevEnd, curIn);
+        const appliedDelta = Math.max(-Math.max(0, maxLeftExtension), Math.min(maxDelta, deltaSec));
         const newStart = asTimelineSeconds(Number((curStart + appliedDelta).toFixed(2)));
         const newDur = asSeconds(Number((curDur - appliedDelta).toFixed(2)));
         const newIn = asSourceSeconds(Number((curIn + appliedDelta).toFixed(2)));
@@ -326,7 +375,10 @@ export const App: React.FC = () => {
         validateTimelineClip(updated);
         return updated;
       } else {
-        const newDur = asSeconds(Math.max(0.5, Number((curDur + deltaSec).toFixed(2))));
+        // Guard against extending past next sibling boundary
+        const maxPossibleDur = Number.isFinite(minNextStart) ? minNextStart - curStart : Infinity;
+        const requestedDur = Math.max(0.5, Number((curDur + deltaSec).toFixed(2)));
+        const newDur = asSeconds(Math.min(requestedDur, maxPossibleDur));
         const newOut = asSourceSeconds(Number((curIn + newDur).toFixed(2)));
         const updated: TimelineClip = {
           ...c,
@@ -338,16 +390,66 @@ export const App: React.FC = () => {
         return updated;
       }
     }));
-  }, [clips, pushHistory, tokens]);
+  }, [clips, pushHistory, tokens, trackStates]);
 
-  // Shift / Move clip horizontally along timeline
+  // Shift / Move clip horizontally along timeline with track-lock check and collision awareness
   const handleMoveClip = useCallback((clipId: string, newStartSec: number) => {
+    const target = clips.find(c => c.id === clipId);
+    if (!target) return;
+    if (trackStates[target.trackId]?.locked) return;
+
     if (!dragStartClipsRef.current) {
       dragStartClipsRef.current = clips;
     }
+
+    const baselineClips = dragStartClipsRef.current;
+    const initialClip = baselineClips.find(c => c.id === clipId) || target;
+    const initialStart = initialClip.timelineStart ?? initialClip.sourceStart ?? asTimelineSeconds(0);
+    const clipDur = target.timelineDuration ?? target.duration ?? asSeconds(0);
+
+    // Identify sibling clips on the same track
+    const siblings = baselineClips.filter(c => c.trackId === target.trackId && c.id !== clipId);
+
+    // Bounding siblings before and after initial position
+    const siblingsBefore = siblings.filter(s => {
+      const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+      return sStart < initialStart;
+    });
+    const siblingsAfter = siblings.filter(s => {
+      const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+      return sStart > initialStart;
+    });
+
+    const maxPrevEnd = siblingsBefore.length > 0
+      ? Math.max(0, ...siblingsBefore.map(s => {
+          const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+          const sDur = s.timelineDuration ?? s.duration ?? asSeconds(0);
+          return sStart + sDur;
+        }))
+      : 0;
+
+    const minNextStart = siblingsAfter.length > 0
+      ? Math.min(...siblingsAfter.map(s => s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0)))
+      : Infinity;
+
+    // Boundary clamping to prevent overlapping sibling clips on the same track
+    let clampedStart = Math.max(maxPrevEnd, newStartSec);
+    if (Number.isFinite(minNextStart)) {
+      clampedStart = Math.min(clampedStart, Math.max(maxPrevEnd, minNextStart - clipDur));
+    }
+
+    // Magnetic snap within 0.15s of preceding boundary
+    if (Math.abs(clampedStart - maxPrevEnd) <= 0.15) {
+      clampedStart = maxPrevEnd;
+    }
+    // Magnetic snap within 0.15s of succeeding boundary
+    if (Number.isFinite(minNextStart) && Math.abs((clampedStart + clipDur) - minNextStart) <= 0.15) {
+      clampedStart = minNextStart - clipDur;
+    }
+
     setClips(prev => prev.map(c => {
       if (c.id !== clipId) return c;
-      const roundedStart = asTimelineSeconds(Number(newStartSec.toFixed(2)));
+      const roundedStart = asTimelineSeconds(Number(clampedStart.toFixed(2)));
       const updated: TimelineClip = {
         ...c,
         timelineStart: roundedStart,
@@ -356,7 +458,7 @@ export const App: React.FC = () => {
       validateTimelineClip(updated);
       return updated;
     }));
-  }, [clips]);
+  }, [clips, trackStates]);
 
   const handleClipMoveEnd = useCallback((_clipId: string) => {
     if (dragStartClipsRef.current) {
@@ -422,15 +524,17 @@ export const App: React.FC = () => {
     if (selectedClipId) {
       const clipToDelete = clips.find(c => c.id === selectedClipId);
       if (clipToDelete) {
-        pushHistory(tokens, clips);
-        // Cleanly revoke blob URL if this clip was backed by an imported local file
-        if (clipToDelete.videoUrl?.startsWith('blob:')) {
-          try {
-            URL.revokeObjectURL(clipToDelete.videoUrl);
-            blobUrlsRef.current.delete(clipToDelete.videoUrl);
-          } catch {}
+        if (trackStates[clipToDelete.trackId]?.locked) {
+          alert('Cannot delete clips on a locked track. Please unlock the track first.');
+          return;
         }
-        setClips(prev => prev.filter(c => c.id !== selectedClipId));
+        pushHistory(tokens, clips);
+        const remainingClips = clips.filter(c => c.id !== selectedClipId);
+        // Cleanly revoke blob URL ONLY when no other clip AND no media asset references it
+        if (clipToDelete.videoUrl) {
+          safelyRevokeBlobUrl(clipToDelete.videoUrl, remainingClips, mediaAssets);
+        }
+        setClips(remainingClips);
         setSelectedClipId(undefined);
         return;
       }
@@ -440,7 +544,7 @@ export const App: React.FC = () => {
     if (currentToken) {
       handleToggleDeleteToken(currentToken.id);
     }
-  }, [selectedClipId, clips, tokens, currentTime, handleToggleDeleteToken, pushHistory]);
+  }, [selectedClipId, clips, tokens, currentTime, handleToggleDeleteToken, pushHistory, trackStates, safelyRevokeBlobUrl, mediaAssets]);
 
   // Add Asset from Media Bin to Timeline
   const handleAddToTimeline = useCallback((asset: MediaAsset) => {

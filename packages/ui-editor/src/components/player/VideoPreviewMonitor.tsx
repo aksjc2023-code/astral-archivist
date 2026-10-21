@@ -99,6 +99,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     try {
       v.currentTime = targetSec;
     } catch {
+      activeSeekSeqRef.current = 0;
       activeSeekTargetRef.current = null;
       isSeekingRef.current = false;
       onSeekLockChange?.(false);
@@ -113,6 +114,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           pendingSeekTargetRef.current = null;
           executeSeek(nextTarget);
         } else {
+          activeSeekSeqRef.current = 0;
           activeSeekTargetRef.current = null;
           isSeekingRef.current = false;
           onSeekLockChange?.(false);
@@ -134,6 +136,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     onSeekLockChange?.(true);
   };
 
+  const SEEK_EPSILON = 0.08; // 80ms tight convergence threshold for hardware frame accuracy
+
   const handleSeeked = () => {
     const v = videoRef.current;
     if (!v) return;
@@ -146,20 +150,27 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
       return;
     }
 
-    // Verify whether this seeked event matches the active generation target within tolerance
-    const target = activeSeekTargetRef.current;
-    if (target !== null) {
-      const delta = Math.abs(v.currentTime - target);
-      if (delta > 0.35) {
-        // Stale seeked event from an earlier generation; do not unlock prematurely!
-        return;
-      }
+    // Verify whether this seeked event belongs to the active in-flight sequence generation
+    if (
+      activeSeekSeqRef.current === 0 ||
+      activeSeekSeqRef.current !== seekSeqRef.current ||
+      activeSeekTargetRef.current === null
+    ) {
+      return;
+    }
+
+    // Verify whether the observed currentTime converged to active target within seek tolerance
+    const delta = Math.abs(v.currentTime - activeSeekTargetRef.current);
+    if (delta > SEEK_EPSILON) {
+      // Stale seeked event from an earlier generation or unfinished decoder seek; do not unlock prematurely!
+      return;
     }
 
     if (seekTimeoutRef.current) {
       window.clearTimeout(seekTimeoutRef.current);
       seekTimeoutRef.current = null;
     }
+    activeSeekSeqRef.current = 0;
     activeSeekTargetRef.current = null;
     isSeekingRef.current = false;
     onSeekLockChange?.(false);

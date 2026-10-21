@@ -114,9 +114,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     onSeek(clickedTime);
   };
 
-  const handleTrimMouseDown = (e: React.MouseEvent, clipId: string, side: 'left' | 'right') => {
+  const handleTrimMouseDown = (e: React.MouseEvent, clipId: string, side: 'left' | 'right', trackId?: string) => {
     e.stopPropagation();
     e.preventDefault();
+    if (trackId && activeTrackStates[trackId]?.locked) return;
     const startX = e.clientX;
     let accumulatedSec = 0;
 
@@ -637,7 +638,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         aria-label="Trim In-Point (Left handle)"
                         tabIndex={0}
                         title="Drag to trim clip in-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left')}
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', clip.trackId)}
                         style={{
                           position: 'absolute',
                           left: '0',
@@ -655,7 +656,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         aria-label="Trim Out-Point (Right handle)"
                         tabIndex={0}
                         title="Drag to trim clip out-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right')}
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', clip.trackId)}
                         style={{
                           position: 'absolute',
                           right: '0',
