@@ -7,7 +7,7 @@
 declare const __brand: unique symbol;
 
 /** Branded / Semantic time units in seconds */
-export type Seconds = number;
+export type Seconds = number & { readonly [__brand]: 'Seconds' };
 export type TimelineSeconds = number & { readonly [__brand]: 'TimelineSeconds' };
 export type SourceSeconds = number & { readonly [__brand]: 'SourceSeconds' };
 export type VirtualSeconds = number & { readonly [__brand]: 'VirtualSeconds' };
@@ -16,10 +16,13 @@ export type VirtualSeconds = number & { readonly [__brand]: 'VirtualSeconds' };
 export const asTimelineSeconds = (s: number): TimelineSeconds => s as TimelineSeconds;
 export const asSourceSeconds = (s: number): SourceSeconds => s as SourceSeconds;
 export const asVirtualSeconds = (s: number): VirtualSeconds => s as VirtualSeconds;
-export const asSeconds = (s: number): Seconds => s;
+export const asSeconds = (s: number): Seconds => s as Seconds;
+
+export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5' | '21:9' | '4:3';
 
 export interface WordToken {
   id: string;
+  mediaId?: string;           // Asset / source media ID this token belongs to
   text: string;
   start: SourceSeconds;       // Source timestamp in seconds
   end: SourceSeconds;         // Source timestamp in seconds
@@ -34,6 +37,7 @@ export interface WordToken {
 
 export interface PlaybackSegment {
   id: string;
+  mediaId?: string;           // Asset ID this playback segment belongs to
   sourceStart: SourceSeconds;  // Interval [a_k, b_k] in raw source media
   sourceEnd: SourceSeconds;
   virtualStart: VirtualSeconds; // Interval [v_k^start, v_k^end] in rippled virtual timeline

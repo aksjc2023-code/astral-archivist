@@ -59,15 +59,24 @@ export interface RebuildResult {
  */
 export function buildPlaybackSegments(
   tokens: readonly WordToken[],
-  clock: Clock = defaultClock
+  mediaIdOrClock?: string | Clock,
+  clockProvider: Clock = defaultClock
 ): RebuildResult {
+  const targetMediaId = typeof mediaIdOrClock === 'string' ? mediaIdOrClock : undefined;
+  const clock = (typeof mediaIdOrClock === 'object' && mediaIdOrClock !== null && 'now' in mediaIdOrClock)
+    ? mediaIdOrClock
+    : clockProvider;
+
   const startTime = clock.now();
 
-  // 1. Defensively validate and normalize inputs
+  // 1. Defensively validate and normalize inputs (optionally scoped to targetMediaId)
   const validTokens: WordToken[] = [];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     if (!t) continue;
+    if (targetMediaId && t.mediaId && t.mediaId !== targetMediaId) {
+      continue;
+    }
     if (Number.isFinite(t.start) && Number.isFinite(t.end) && t.end > t.start) {
       validTokens.push(t);
     }
@@ -120,6 +129,7 @@ export function buildPlaybackSegments(
       if (duration >= MIN_SEGMENT_DURATION_SEC) {
         segments.push({
           id: `seg_${segIdCounter++}`,
+          mediaId: targetMediaId ?? keptTokens[0]?.mediaId,
           sourceStart: currentStart,
           sourceEnd: currentEnd,
           virtualStart: asVirtualSeconds(0), // Assigned in bijective mapping pass
@@ -137,6 +147,7 @@ export function buildPlaybackSegments(
   if (finalDuration >= MIN_SEGMENT_DURATION_SEC) {
     segments.push({
       id: `seg_${segIdCounter++}`,
+      mediaId: targetMediaId ?? keptTokens[0]?.mediaId,
       sourceStart: currentStart,
       sourceEnd: currentEnd,
       virtualStart: asVirtualSeconds(0),

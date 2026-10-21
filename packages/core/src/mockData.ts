@@ -4,6 +4,7 @@ import {
   TimelineClip,
   MarkerFlag,
   ToolSettings,
+  asSeconds,
   asSourceSeconds,
   asTimelineSeconds,
 } from './types';
@@ -11,7 +12,7 @@ import {
 /**
  * 9 Media Assets from Page 1 & 2 of Movavi 2020 Redesign PDF
  */
-export const INITIAL_MEDIA_ASSETS: MediaAsset[] = [
+const RAW_MEDIA_ASSETS: (Omit<MediaAsset, 'duration'> & { duration: number })[] = [
   {
     id: 'asset_1',
     name: 'Great Festival Colors.mov',
@@ -121,6 +122,11 @@ export const INITIAL_MEDIA_ASSETS: MediaAsset[] = [
   },
 ];
 
+export const INITIAL_MEDIA_ASSETS: MediaAsset[] = RAW_MEDIA_ASSETS.map(a => ({
+  ...a,
+  duration: asSeconds(a.duration),
+}));
+
 /**
  * 42 Word Tokens Spanning the Summer Festival Story
  * Embedded with 5 fillers, 4 pauses, and B-roll keyword anchors
@@ -181,6 +187,7 @@ const RAW_WORD_TOKENS: (Omit<WordToken, 'start' | 'end'> & { start: number; end:
 
 export const INITIAL_WORD_TOKENS: WordToken[] = RAW_WORD_TOKENS.map(t => ({
   ...t,
+  mediaId: 'asset_1',
   start: asSourceSeconds(t.start),
   end: asSourceSeconds(t.end),
 }));
@@ -188,11 +195,13 @@ export const INITIAL_WORD_TOKENS: WordToken[] = RAW_WORD_TOKENS.map(t => ({
 /**
  * Initial Timeline Multi-Track Configuration Matching Page 1
  */
-const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'sourceIn' | 'sourceOut' | 'sourceStart'> & {
+const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuration' | 'sourceIn' | 'sourceOut' | 'sourceStart' | 'duration'> & {
   timelineStart: number;
+  timelineDuration: number;
   sourceIn: number;
   sourceOut: number;
   sourceStart?: number;
+  duration: number;
 })[] = [
   // Track 1: Purple Titles
   {
@@ -310,9 +319,11 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'sourceIn' | 'so
 export const INITIAL_TIMELINE_CLIPS: TimelineClip[] = RAW_TIMELINE_CLIPS.map(c => ({
   ...c,
   timelineStart: asTimelineSeconds(c.timelineStart),
+  timelineDuration: asSeconds(c.timelineDuration),
   sourceIn: asSourceSeconds(c.sourceIn),
   sourceOut: asSourceSeconds(c.sourceOut),
   sourceStart: c.sourceStart !== undefined ? asTimelineSeconds(c.sourceStart) : undefined,
+  duration: asSeconds(c.duration),
 }));
 
 /**

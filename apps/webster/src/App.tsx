@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   WordToken,
+  PlaybackSegment,
   MediaAsset,
   TimelineClip,
   MarkerFlag,
@@ -27,6 +28,7 @@ import {
   asTimelineSeconds,
   asSourceSeconds,
   asSeconds,
+  AspectRatio,
 } from '@astral/core';
 
 import {
@@ -62,8 +64,9 @@ export const App: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [timelineScale, setTimelineScale] = useState(1.0);
-  const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>('clip_video_1');
+  const [trackStates, setTrackStates] = useState<Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean }>>({});
 
   // Tool Drawer & Visual Filter State
   const [toolSettings, setToolSettings] = useState<ToolSettings>(INITIAL_TOOL_SETTINGS);
@@ -82,6 +85,9 @@ export const App: React.FC = () => {
 
   // Ref to retain and cleanup seek-lock timeout
   const seekLockTimeoutRef = useRef<number | null>(null);
+
+  // Retain starting clips during drag to support pristine undo/redo
+  const dragStartClipsRef = useRef<TimelineClip[] | null>(null);
 
   // Retain all allocated blob URLs to cleanly revoke on delete/unmount
   const blobUrlsRef = useRef<Set<string>>(new Set());
@@ -109,20 +115,33 @@ export const App: React.FC = () => {
     recoveryLog: 'System healthy. Zero SSR runtime active.',
   });
 
-  // Calculate real-time PlaybackSegments using 85ms coalescing
+  // Active video clip dynamically linked to whichever clip is currently under timeline playhead
+  const activeClip = useMemo(() => {
+    return getClipAtTimelineTime(asTimelineSeconds(currentTime), clips, 'track_video') ?? clips.find(c => c.trackId === 'track_video');
+  }, [clips, currentTime]);
+
+  const activeMediaId = activeClip?.mediaId ?? 'asset_1';
+
+  // Calculate real-time PlaybackSegments scoped strictly to active clip's media asset
   const rebuildResult = useMemo(() => {
-    return buildPlaybackSegments(tokens);
-  }, [tokens]);
+    return buildPlaybackSegments(tokens, activeMediaId);
+  }, [tokens, activeMediaId]);
+
+  // Asset-scoped playback segments map to prevent cross-asset cut leakage
+  const segmentsByMediaId = useMemo(() => {
+    const map = new Map<string, PlaybackSegment[]>();
+    const mediaIds = new Set(clips.map(c => c.mediaId).filter(Boolean) as string[]);
+    mediaIds.add('asset_1');
+    mediaIds.forEach(id => {
+      map.set(id, buildPlaybackSegments(tokens, id).segments);
+    });
+    return map;
+  }, [tokens, clips]);
 
   // Composition project duration derived cleanly from maximum clip boundary
   const projectDuration = useMemo(() => {
     return getProjectDuration(clips, 30.0);
   }, [clips]);
-
-  // Active video clip dynamically linked to whichever clip is currently under timeline playhead
-  const activeClip = useMemo(() => {
-    return getClipAtTimelineTime(asTimelineSeconds(currentTime), clips, 'track_video') ?? clips.find(c => c.trackId === 'track_video');
-  }, [clips, currentTime]);
 
   // Exact mapped source offset within the active video clip
   const activeClipSourceTime = useMemo(() => {
@@ -321,6 +340,62 @@ export const App: React.FC = () => {
     }));
   }, [clips, pushHistory, tokens]);
 
+  // Shift / Move clip horizontally along timeline
+  const handleMoveClip = useCallback((clipId: string, newStartSec: number) => {
+    if (!dragStartClipsRef.current) {
+      dragStartClipsRef.current = clips;
+    }
+    setClips(prev => prev.map(c => {
+      if (c.id !== clipId) return c;
+      const roundedStart = asTimelineSeconds(Number(newStartSec.toFixed(2)));
+      const updated: TimelineClip = {
+        ...c,
+        timelineStart: roundedStart,
+        sourceStart: roundedStart,
+      };
+      validateTimelineClip(updated);
+      return updated;
+    }));
+  }, [clips]);
+
+  const handleClipMoveEnd = useCallback((_clipId: string) => {
+    if (dragStartClipsRef.current) {
+      pushHistory(tokens, dragStartClipsRef.current);
+      dragStartClipsRef.current = null;
+    }
+  }, [pushHistory, tokens]);
+
+  // Track Header Actions (Hide, Lock, Mute)
+  const handleToggleTrackHidden = useCallback((trackId: string) => {
+    setTrackStates(prev => ({
+      ...prev,
+      [trackId]: {
+        ...prev[trackId],
+        hidden: !prev[trackId]?.hidden,
+      },
+    }));
+  }, []);
+
+  const handleToggleTrackLocked = useCallback((trackId: string) => {
+    setTrackStates(prev => ({
+      ...prev,
+      [trackId]: {
+        ...prev[trackId],
+        locked: !prev[trackId]?.locked,
+      },
+    }));
+  }, []);
+
+  const handleToggleTrackMuted = useCallback((trackId: string) => {
+    setTrackStates(prev => ({
+      ...prev,
+      [trackId]: {
+        ...prev[trackId],
+        muted: !prev[trackId]?.muted,
+      },
+    }));
+  }, []);
+
   // Add Track Interaction
   const handleAddTrack = useCallback(() => {
     const customTracks = clips.filter(c => c.trackId.startsWith('track_custom'));
@@ -514,16 +589,20 @@ export const App: React.FC = () => {
   // Unified seek coordinator: leaps over cut segments if target falls into a cut interval
   const handleSeek = useCallback((targetTime: number) => {
     let finalTime = targetTime;
-    if (rebuildResult.segments.length > 0) {
-      const targetTimeline = asTimelineSeconds(targetTime);
-      const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
-        ?? clips.find(c => c.trackId === 'track_video');
-      if (currentClip) {
+    const targetTimeline = asTimelineSeconds(targetTime);
+    const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
+      ?? clips.find(c => c.trackId === 'track_video');
+
+    if (currentClip) {
+      const clipMediaId = currentClip.mediaId ?? 'asset_1';
+      const clipSegments = segmentsByMediaId.get(clipMediaId) ?? [];
+
+      if (clipSegments.length > 0) {
         const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
-        const firstSeg = rebuildResult.segments[0];
-        const lastSeg = rebuildResult.segments[rebuildResult.segments.length - 1];
+        const firstSeg = clipSegments[0];
+        const lastSeg = clipSegments[clipSegments.length - 1];
         if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
-          const jumpResult = getNextValidTime(sourcePos, rebuildResult.segments);
+          const jumpResult = getNextValidTime(sourcePos, clipSegments);
           if (jumpResult.didJump) {
             finalTime = sourceToTimelineTime(jumpResult.nextTime, currentClip);
             setTelemetry(prev => ({
@@ -536,7 +615,7 @@ export const App: React.FC = () => {
       }
     }
     setCurrentTime(Math.max(0, Math.min(projectDuration, finalTime)));
-  }, [rebuildResult.segments, clips, projectDuration]);
+  }, [clips, segmentsByMediaId, projectDuration]);
 
   // Playback Frame Loop: STRICTLY STOPPED WHEN PAUSED + RIPPLE LEAPS ACROSS CUTS
   useEffect(() => {
@@ -553,19 +632,22 @@ export const App: React.FC = () => {
         let rawNext = prevTime + deltaSec;
 
         // Transcript ripple cuts integration:
-        // If playhead falls into a cut interval in the active video clip, leap over it via O(log N) binary search!
-        if (rebuildResult.segments.length > 0) {
-          const targetTimeline = asTimelineSeconds(rawNext);
-          const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
-            ?? clips.find(c => c.trackId === 'track_video');
+        // Evaluated strictly against the active clip's media asset playback segments
+        const targetTimeline = asTimelineSeconds(rawNext);
+        const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
+          ?? clips.find(c => c.trackId === 'track_video');
 
-          if (currentClip) {
+        if (currentClip) {
+          const clipMediaId = currentClip.mediaId ?? 'asset_1';
+          const clipSegments = segmentsByMediaId.get(clipMediaId) ?? [];
+
+          if (clipSegments.length > 0) {
             const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
-            const firstSeg = rebuildResult.segments[0];
-            const lastSeg = rebuildResult.segments[rebuildResult.segments.length - 1];
+            const firstSeg = clipSegments[0];
+            const lastSeg = clipSegments[clipSegments.length - 1];
 
             if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
-              const jumpResult = getNextValidTime(sourcePos, rebuildResult.segments);
+              const jumpResult = getNextValidTime(sourcePos, clipSegments);
               if (jumpResult.didJump) {
                 rawNext = sourceToTimelineTime(jumpResult.nextTime, currentClip);
                 setTelemetry(prev => ({
@@ -592,7 +674,7 @@ export const App: React.FC = () => {
 
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, projectDuration, playbackSpeed, clips, rebuildResult.segments]);
+  }, [isPlaying, projectDuration, playbackSpeed, clips, segmentsByMediaId]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -767,9 +849,15 @@ export const App: React.FC = () => {
           markers={markers}
           scale={timelineScale}
           selectedClipId={selectedClipId}
+          trackStates={trackStates}
+          onToggleTrackHidden={handleToggleTrackHidden}
+          onToggleTrackLocked={handleToggleTrackLocked}
+          onToggleTrackMuted={handleToggleTrackMuted}
           onSeek={handleSeek}
           onSelectClip={setSelectedClipId}
           onTrimClip={handleTrimClip}
+          onMoveClip={handleMoveClip}
+          onClipMoveEnd={handleClipMoveEnd}
           onAddTrack={handleAddTrack}
           onDeleteMarker={markerId => setMarkers(prev => prev.filter(m => m.id !== markerId))}
         />

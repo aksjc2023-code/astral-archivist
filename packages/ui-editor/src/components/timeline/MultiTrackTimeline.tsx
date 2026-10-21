@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { TimelineClip, MarkerFlag, PlaybackSegment, formatTimecode } from '@astral/core';
 import {
   IconEye,
@@ -6,6 +6,12 @@ import {
   IconVolumeMute,
   IconTitles,
 } from '../common/ScarletIcons';
+
+export interface TrackControlState {
+  hidden?: boolean;
+  locked?: boolean;
+  muted?: boolean;
+}
 
 export interface MultiTrackTimelineProps {
   currentTime: number;
@@ -15,9 +21,15 @@ export interface MultiTrackTimelineProps {
   markers: MarkerFlag[];
   scale: number; // Pixels per second multiplier
   selectedClipId?: string;
+  trackStates?: Record<string, TrackControlState>;
+  onToggleTrackHidden?: (trackId: string) => void;
+  onToggleTrackLocked?: (trackId: string) => void;
+  onToggleTrackMuted?: (trackId: string) => void;
   onSeek: (time: number) => void;
   onSelectClip?: (clipId: string) => void;
   onTrimClip?: (clipId: string, side: 'left' | 'right', deltaSec: number) => void;
+  onMoveClip?: (clipId: string, newStartSec: number) => void;
+  onClipMoveEnd?: (clipId: string) => void;
   onAddTrack?: () => void;
   onDeleteMarker?: (markerId: string) => void;
 }
@@ -33,15 +45,58 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   markers,
   scale = 1.0,
   selectedClipId,
+  trackStates,
+  onToggleTrackHidden,
+  onToggleTrackLocked,
+  onToggleTrackMuted,
   onSeek,
   onSelectClip,
   onTrimClip,
+  onMoveClip,
+  onClipMoveEnd,
   onAddTrack,
   onDeleteMarker,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+
+  // Track control state fallback if not controlled by parent
+  const [internalTrackStates, setInternalTrackStates] = useState<Record<string, TrackControlState>>({});
+  const activeTrackStates = trackStates ?? internalTrackStates;
+
+  const toggleHidden = (trackId: string) => {
+    if (onToggleTrackHidden) {
+      onToggleTrackHidden(trackId);
+    } else {
+      setInternalTrackStates(prev => ({
+        ...prev,
+        [trackId]: { ...prev[trackId], hidden: !prev[trackId]?.hidden },
+      }));
+    }
+  };
+
+  const toggleLocked = (trackId: string) => {
+    if (onToggleTrackLocked) {
+      onToggleTrackLocked(trackId);
+    } else {
+      setInternalTrackStates(prev => ({
+        ...prev,
+        [trackId]: { ...prev[trackId], locked: !prev[trackId]?.locked },
+      }));
+    }
+  };
+
+  const toggleMuted = (trackId: string) => {
+    if (onToggleTrackMuted) {
+      onToggleTrackMuted(trackId);
+    } else {
+      setInternalTrackStates(prev => ({
+        ...prev,
+        [trackId]: { ...prev[trackId], muted: !prev[trackId]?.muted },
+      }));
+    }
+  };
 
   const pxPerSec = 22 * scale;
   const totalTimelineWidthPx = Math.max(1400, duration * pxPerSec + 300);
@@ -78,6 +133,46 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Horizontal clip dragging / timeline shift coordinator
+  const handleClipMouseDown = (
+    e: React.MouseEvent,
+    clipId: string,
+    initialStart: number,
+    trackId: string
+  ) => {
+    if (e.button !== 0) return;
+    if (activeTrackStates[trackId]?.locked) return;
+
+    e.stopPropagation();
+    onSelectClip?.(clipId);
+
+    const startX = e.clientX;
+    let hasDragged = false;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaPx = moveEvent.clientX - startX;
+      if (!hasDragged && Math.abs(deltaPx) > 3) {
+        hasDragged = true;
+      }
+      if (hasDragged) {
+        const deltaSec = deltaPx / pxPerSec;
+        const newStart = Math.max(0, Number((initialStart + deltaSec).toFixed(2)));
+        onMoveClip?.(clipId, newStart);
+      }
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (hasDragged) {
+        onClipMoveEnd?.(clipId);
+      }
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -146,26 +241,28 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         }}
       >
         {/* Top Header Corner: Plus Add Track */}
-        <div
-          role="button"
-          tabIndex={0}
+        <button
+          type="button"
           aria-label="Add New Track"
           style={{
             height: '28px',
+            backgroundColor: 'transparent',
+            border: 'none',
             borderBottom: '1px solid #2B303A',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
             color: '#168BFF',
-            fontSize: '16px',
-            fontWeight: 600,
+            fontSize: '18px',
+            fontWeight: 700,
+            transition: 'background-color 0.15s, transform 0.1s',
           }}
           title="Add New Video/Audio Track"
           onClick={onAddTrack ?? (() => {})}
         >
           +
-        </div>
+        </button>
 
         {/* Track 1 Header: Titles */}
         <div
@@ -181,8 +278,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           title="Titles & Subtitles Track"
         >
           <IconTitles size={14} color="#8854D0" />
-          <IconEye size={12} color="#636E7B" />
-          <IconLock size={12} color="#636E7B" />
+          <button
+            type="button"
+            title={activeTrackStates['track_title']?.hidden ? 'Show Track' : 'Hide Track'}
+            onClick={() => toggleHidden('track_title')}
+            style={trackBtnStyle}
+          >
+            <IconEye size={13} color={activeTrackStates['track_title']?.hidden ? '#FF4757' : '#A4B0BE'} />
+          </button>
+          <button
+            type="button"
+            title={activeTrackStates['track_title']?.locked ? 'Unlock Track' : 'Lock Track'}
+            onClick={() => toggleLocked('track_title')}
+            style={trackBtnStyle}
+          >
+            <IconLock size={13} color={activeTrackStates['track_title']?.locked ? '#FFD32A' : '#636E7B'} />
+          </button>
         </div>
 
         {/* Track 2 Header: Video & Waveform */}
@@ -201,8 +312,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         >
           <span style={{ fontSize: '13px' }}>🎬</span>
           <div style={{ display: 'flex', gap: '4px' }}>
-            <IconEye size={12} color="#A4B0BE" />
-            <IconLock size={12} color="#636E7B" />
+            <button
+              type="button"
+              title={activeTrackStates['track_video']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_video')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={13} color={activeTrackStates['track_video']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              type="button"
+              title={activeTrackStates['track_video']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_video')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={13} color={activeTrackStates['track_video']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
           </div>
         </div>
 
@@ -220,8 +345,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           title="Audio & Music Track"
         >
           <span style={{ fontSize: '13px' }}>🎵</span>
-          <IconVolumeMute size={12} color="#636E7B" />
-          <IconLock size={12} color="#636E7B" />
+          <button
+            type="button"
+            title={activeTrackStates['track_audio']?.muted ? 'Unmute Track' : 'Mute Track'}
+            onClick={() => toggleMuted('track_audio')}
+            style={trackBtnStyle}
+          >
+            <IconVolumeMute size={13} color={activeTrackStates['track_audio']?.muted ? '#FF4757' : '#10AC84'} />
+          </button>
+          <button
+            type="button"
+            title={activeTrackStates['track_audio']?.locked ? 'Unlock Track' : 'Lock Track'}
+            onClick={() => toggleLocked('track_audio')}
+            style={trackBtnStyle}
+          >
+            <IconLock size={13} color={activeTrackStates['track_audio']?.locked ? '#FFD32A' : '#636E7B'} />
+          </button>
         </div>
 
         {/* Dynamic Custom Track Headers */}
@@ -240,8 +379,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             title={`Custom Overlay Track ${idx + 1} (${trackId})`}
           >
             <span style={{ fontSize: '11px', fontWeight: 600 }}>T{idx + 4}</span>
-            <IconEye size={12} color="#A4B0BE" />
-            <IconLock size={12} color="#636E7B" />
+            <button
+              type="button"
+              title={activeTrackStates[trackId]?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden(trackId)}
+              style={trackBtnStyle}
+            >
+              <IconEye size={13} color={activeTrackStates[trackId]?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              type="button"
+              title={activeTrackStates[trackId]?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked(trackId)}
+              style={trackBtnStyle}
+            >
+              <IconLock size={13} color={activeTrackStates[trackId]?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
           </div>
         ))}
       </div>
@@ -383,6 +536,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               const isSelected = clip.id === selectedClipId;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
+              const isTrackHidden = activeTrackStates['track_title']?.hidden;
+              const isTrackLocked = activeTrackStates['track_title']?.locked;
               return (
                 <div
                   key={clip.id}
@@ -390,11 +545,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_title')}
                   onDoubleClick={e => {
                     e.stopPropagation();
                     onSeek(clipStart);
                   }}
-                  title={`[Title] ${clip.title} (Double-click to seek)`}
+                  title={`[Title] ${clip.title} (Drag to shift, Double-click to seek)`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -413,8 +569,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     boxShadow: isSelected ? '0 0 10px rgba(255, 211, 42, 0.5)' : '0 2px 6px rgba(136, 84, 208, 0.3)',
                     overflow: 'hidden',
                     whiteSpace: 'nowrap',
-                    cursor: 'pointer',
-                    transition: 'all 0.12s ease',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackHidden ? 0.3 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
+                    transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
                   <span>{clip.title}</span>
@@ -436,6 +594,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               const isSelected = clip.id === selectedClipId || clip.isSelected;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
+              const isTrackHidden = activeTrackStates['track_video']?.hidden;
+              const isTrackLocked = activeTrackStates['track_video']?.locked;
               return (
                 <div
                   key={clip.id}
@@ -443,11 +603,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_video')}
                   onDoubleClick={e => {
                     e.stopPropagation();
                     onSeek(clipStart);
                   }}
-                  title={`[Video] ${clip.title} (${clipDur.toFixed(1)}s) - Click to select, Double-click to seek`}
+                  title={`[Video] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Double-click to seek`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -461,13 +622,15 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
-                    cursor: 'pointer',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackHidden ? 0.3 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
                     boxShadow: isSelected ? '0 0 14px rgba(255, 211, 42, 0.45)' : 'none',
-                    transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
+                    transition: 'border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Yellow Drag Handles if Selected (Page 1 Interactive Trim) */}
-                  {isSelected && (
+                  {/* Yellow Drag Handles if Selected and track not locked */}
+                  {isSelected && !isTrackLocked && (
                     <>
                       <div
                         role="separator"
@@ -591,6 +754,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               const isSelected = clip.id === selectedClipId;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
+              const isTrackMuted = activeTrackStates['track_audio']?.muted;
+              const isTrackLocked = activeTrackStates['track_audio']?.locked;
               return (
                 <div
                   key={clip.id}
@@ -598,11 +763,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_audio')}
                   onDoubleClick={e => {
                     e.stopPropagation();
                     onSeek(clipStart);
                   }}
-                  title={`[Audio] ${clip.title} (Double-click to seek)`}
+                  title={`[Audio] ${clip.title} - Drag to shift, Double-click to seek`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -619,7 +785,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     color: '#FFFFFF',
                     boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : '0 2px 8px rgba(16, 172, 132, 0.3)',
                     overflow: 'hidden',
-                    cursor: 'pointer',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackMuted ? 0.35 : 1,
+                    filter: isTrackMuted ? 'grayscale(70%)' : 'none',
                     transition: 'all 0.12s ease',
                   }}
                 >
@@ -649,6 +817,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           {/* Dynamic Custom Tracks Lanes */}
           {customTrackIds.map((trackId, trackIdx) => {
             const trackClips = clips.filter(c => c.trackId === trackId);
+            const isTrackHidden = activeTrackStates[trackId]?.hidden;
+            const isTrackLocked = activeTrackStates[trackId]?.locked;
             return (
               <div
                 key={trackId}
@@ -670,11 +840,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         e.stopPropagation();
                         onSelectClip?.(clip.id);
                       }}
+                      onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, trackId)}
                       onDoubleClick={e => {
                         e.stopPropagation();
                         onSeek(clipStart);
                       }}
-                      title={`${clip.title} (Double-click to seek)`}
+                      title={`${clip.title} - Drag to shift, Double-click to seek`}
                       style={{
                         position: 'absolute',
                         left: `${clipStart * pxPerSec}px`,
@@ -690,7 +861,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         color: '#FFFFFF',
                         boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : 'none',
                         overflow: 'hidden',
-                        cursor: 'pointer',
+                        cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                        opacity: isTrackHidden ? 0.3 : 1,
+                        filter: isTrackHidden ? 'grayscale(80%)' : 'none',
                         fontSize: '11px',
                         fontWeight: 600,
                       }}
@@ -706,4 +879,16 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       </div>
     </div>
   );
+};
+
+const trackBtnStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  padding: '2px',
+  cursor: 'pointer',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  borderRadius: '3px',
+  transition: 'background-color 0.15s, color 0.15s',
 };

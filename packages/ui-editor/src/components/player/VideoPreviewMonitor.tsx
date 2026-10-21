@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { WordToken, ToolSettings, formatTimecode } from '@astral/core';
+import { WordToken, ToolSettings, formatTimecode, AspectRatio } from '@astral/core';
 import {
   IconPlay,
   IconPause,
@@ -19,10 +19,10 @@ export interface VideoPreviewMonitorProps {
   duration: number;
   isPlaying: boolean;
   tokens: WordToken[];
-  aspectRatio: '16:9' | '9:16';
+  aspectRatio: AspectRatio;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
-  onAspectRatioChange: (aspect: '16:9' | '9:16') => void;
+  onAspectRatioChange: (aspect: AspectRatio) => void;
   onNextFrame?: () => void;
   onPrevFrame?: () => void;
   onFirstFrame?: () => void;
@@ -67,13 +67,18 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const [isMuted, setIsMuted] = useState(false);
   const [showCropGuides, setShowCropGuides] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [showAspectMenu, setShowAspectMenu] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const scrubberTrackRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const stageContainerRef = useRef<HTMLDivElement>(null);
 
-  // Robust ref-backed seek coordinator with generation tracking
+  // Robust ref-backed seek coordinator with generation and target verification
   const isSeekingRef = useRef(false);
   const pendingSeekTargetRef = useRef<number | null>(null);
   const seekSeqRef = useRef(0);
+  const activeSeekSeqRef = useRef(0);
+  const activeSeekTargetRef = useRef<number | null>(null);
   const seekTimeoutRef = useRef<number | null>(null);
 
   const executeSeek = (targetSec: number) => {
@@ -81,6 +86,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     if (!v) return;
 
     const currentSeq = ++seekSeqRef.current;
+    activeSeekSeqRef.current = currentSeq;
+    activeSeekTargetRef.current = targetSec;
     isSeekingRef.current = true;
     onSeekLockChange?.(true);
 
@@ -92,6 +99,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     try {
       v.currentTime = targetSec;
     } catch {
+      activeSeekTargetRef.current = null;
       isSeekingRef.current = false;
       onSeekLockChange?.(false);
       return;
@@ -105,6 +113,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           pendingSeekTargetRef.current = null;
           executeSeek(nextTarget);
         } else {
+          activeSeekTargetRef.current = null;
           isSeekingRef.current = false;
           onSeekLockChange?.(false);
         }
@@ -126,18 +135,63 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   };
 
   const handleSeeked = () => {
+    const v = videoRef.current;
+    if (!v) return;
+
     // If another seek arrived while in-flight, execute it with a fresh sequence generation
     if (pendingSeekTargetRef.current !== null) {
       const nextTarget = pendingSeekTargetRef.current;
       pendingSeekTargetRef.current = null;
       executeSeek(nextTarget);
-    } else {
-      if (seekTimeoutRef.current) {
-        window.clearTimeout(seekTimeoutRef.current);
-        seekTimeoutRef.current = null;
+      return;
+    }
+
+    // Verify whether this seeked event matches the active generation target within tolerance
+    const target = activeSeekTargetRef.current;
+    if (target !== null) {
+      const delta = Math.abs(v.currentTime - target);
+      if (delta > 0.35) {
+        // Stale seeked event from an earlier generation; do not unlock prematurely!
+        return;
       }
-      isSeekingRef.current = false;
-      onSeekLockChange?.(false);
+    }
+
+    if (seekTimeoutRef.current) {
+      window.clearTimeout(seekTimeoutRef.current);
+      seekTimeoutRef.current = null;
+    }
+    activeSeekTargetRef.current = null;
+    isSeekingRef.current = false;
+    onSeekLockChange?.(false);
+  };
+
+  // Fullscreen event listener to sync active button state
+  useEffect(() => {
+    const onFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFsChange);
+    };
+  }, []);
+
+  const handleToggleFullscreen = () => {
+    const target = stageContainerRef.current || videoRef.current || document.documentElement;
+    if (!document.fullscreenElement) {
+      if (target.requestFullscreen) {
+        target.requestFullscreen().catch(() => {
+          videoRef.current?.requestFullscreen?.().catch(() => {});
+        });
+      } else if ((target as unknown as { webkitRequestFullscreen?: () => void }).webkitRequestFullscreen) {
+        (target as unknown as { webkitRequestFullscreen: () => void }).webkitRequestFullscreen();
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else if ((document as unknown as { webkitExitFullscreen?: () => void }).webkitExitFullscreen) {
+        (document as unknown as { webkitExitFullscreen: () => void }).webkitExitFullscreen();
+      }
     }
   };
 
@@ -248,6 +302,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     >
       {/* Video Viewport Stage */}
       <div
+        ref={stageContainerRef}
         style={{
           flex: 1,
           display: 'flex',
@@ -264,11 +319,16 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
         <div
           style={{
             position: 'relative',
-            width: aspectRatio === '16:9' ? '100%' : 'auto',
-            height: aspectRatio === '9:16' ? '100%' : 'auto',
-            aspectRatio: aspectRatio === '16:9' ? '16 / 9' : '9 / 16',
-            maxHeight: '100%',
+            aspectRatio: aspectRatio === '16:9' ? '16 / 9' :
+                         aspectRatio === '9:16' ? '9 / 16' :
+                         aspectRatio === '1:1' ? '1 / 1' :
+                         aspectRatio === '4:5' ? '4 / 5' :
+                         aspectRatio === '21:9' ? '21 / 9' :
+                         aspectRatio === '4:3' ? '4 / 3' : '16 / 9',
             maxWidth: '100%',
+            maxHeight: '100%',
+            width: ['16:9', '21:9', '4:3'].includes(aspectRatio) ? '100%' : 'auto',
+            height: ['9:16', '4:5', '1:1'].includes(aspectRatio) ? '100%' : 'auto',
             backgroundColor: '#000000',
             borderRadius: '6px',
             overflow: 'hidden',
@@ -554,28 +614,76 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
 
         {/* Right: Aspect Ratio, Speed Selector (0.25x - 3.0x), Volume, Crop, Fullscreen */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {/* Aspect Ratio Selector */}
-          <button
-            type="button"
-            title="Switch Aspect Ratio (16:9 / 9:16)"
-            aria-label="Switch Aspect Ratio"
-            onClick={() => onAspectRatioChange(aspectRatio === '16:9' ? '9:16' : '16:9')}
-            style={{
-              backgroundColor: '#22262E',
-              color: '#FFFFFF',
-              border: '1px solid #2B303A',
-              borderRadius: '9999px',
-              padding: '3px 10px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <span>{aspectRatio}</span>
-            <IconChevronDown size={10} color="#A4B0BE" />
-          </button>
+          {/* Aspect Ratio Selector Dropdown */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              title="Select Aspect Ratio (16:9, 9:16, 1:1, 4:5, 21:9, 4:3)"
+              aria-label="Select Aspect Ratio"
+              onClick={() => {
+                setShowAspectMenu(!showAspectMenu);
+                setShowSpeedMenu(false);
+              }}
+              style={{
+                backgroundColor: '#22262E',
+                color: '#FFFFFF',
+                border: '1px solid #2B303A',
+                borderRadius: '9999px',
+                padding: '3px 10px',
+                fontSize: '11px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              <span>{aspectRatio}</span>
+              <IconChevronDown size={10} color="#A4B0BE" />
+            </button>
+            {showAspectMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '36px',
+                  right: '0',
+                  backgroundColor: '#1E232B',
+                  border: '1px solid #2B303A',
+                  borderRadius: '8px',
+                  padding: '4px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  zIndex: 60,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                  minWidth: '85px',
+                }}
+              >
+                {(['16:9', '9:16', '1:1', '4:5', '21:9', '4:3'] as AspectRatio[]).map(ratio => (
+                  <button
+                    key={ratio}
+                    type="button"
+                    onClick={() => {
+                      onAspectRatioChange(ratio);
+                      setShowAspectMenu(false);
+                    }}
+                    style={{
+                      backgroundColor: aspectRatio === ratio ? '#168BFF' : 'transparent',
+                      color: aspectRatio === ratio ? '#FFFFFF' : '#A4B0BE',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      fontWeight: aspectRatio === ratio ? 600 : 400,
+                    }}
+                  >
+                    {ratio}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Speed Selector (0.25x - 3.0x) */}
           <div style={{ position: 'relative' }}>
@@ -669,21 +777,18 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <IconCrop size={16} />
           </button>
 
-          {/* Fullscreen */}
+          {/* Fullscreen Preview */}
           <button
             type="button"
-            title="Fullscreen Preview"
-            onClick={() => {
-              const el = document.documentElement;
-              if (document.fullscreenElement) {
-                document.exitFullscreen();
-              } else {
-                el.requestFullscreen().catch(() => {});
-              }
+            title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Preview'}
+            onClick={handleToggleFullscreen}
+            style={{
+              ...transportBtnStyle,
+              color: isFullscreen ? '#168BFF' : '#A4B0BE',
+              backgroundColor: isFullscreen ? 'rgba(22, 139, 255, 0.25)' : '#22262E',
             }}
-            style={transportBtnStyle}
           >
-            <IconFullscreen size={16} />
+            <IconFullscreen size={16} color={isFullscreen ? '#168BFF' : '#A4B0BE'} />
           </button>
         </div>
       </div>
