@@ -395,6 +395,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           {/* Active Live Video Element */}
           <video
             ref={videoRef}
+            id="preview-video-element"
+            data-testid="preview-video-element"
             src={videoPreviewUrl}
             playsInline
             loop

@@ -65,6 +65,8 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
           return (
             <button
               key={tab.id}
+              id={`tab-tool-${tab.id}`}
+              data-testid={`tab-tool-${tab.id}`}
               type="button"
               onClick={() => handleTabClick(tab.id)}
               style={{
@@ -257,9 +259,11 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
             <div key={param}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: '#A4B0BE', textTransform: 'capitalize' }}>
                 <span>{param}</span>
-                <span>{settings.colorAdjustments[param]}</span>
+                <span id={`val-color-${param}`}>{settings.colorAdjustments[param]}</span>
               </div>
               <input
+                id={`slider-color-${param}`}
+                data-testid={`slider-color-${param}`}
                 type="range"
                 min="-100"
                 max="100"
@@ -349,6 +353,8 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               </span>
             </div>
             <input
+              id="slider-master-timeline-volume"
+              data-testid="slider-master-timeline-volume"
               type="range"
               min="0"
               max="200"
@@ -361,6 +367,8 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               {[0, 50, 100, 150, 200].map(val => (
                 <button
                   key={val}
+                  id={`btn-master-preset-${val}`}
+                  data-testid={`btn-master-preset-${val}`}
                   type="button"
                   onClick={() => onMasterVolumeChange?.(val)}
                   style={{
@@ -481,6 +489,8 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               return (
                 <div
                   key={m.id}
+                  id={`opt-overlay-${m.id}`}
+                  data-testid={`opt-overlay-${m.id}`}
                   onClick={() =>
                     onUpdateSettings(prev => ({
                       ...prev,
