@@ -329,8 +329,8 @@ export function getClipAtTimelineTime(
 ): TimelineClip | undefined {
   return clips.find(c => {
     if (c.trackId !== trackId) return false;
-    const start = c.timelineStart ?? c.sourceStart ?? 0;
-    const dur = c.timelineDuration ?? c.duration ?? 0;
+    const start = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
+    const dur = c.timelineDuration ?? c.duration ?? asSeconds(0);
     return timelineTime >= start && timelineTime < start + dur;
   });
 }
