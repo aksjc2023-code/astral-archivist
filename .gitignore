@@ -1,0 +1,29 @@
+# System & dependencies
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Temporary and build artifacts
+.turbo/
+.cache/
+coverage/
+
+# Specific request: do not commit the master prompt/plan files
+Master Engineering Plan.md
+scarletcut_antigravity_master_ui_execution_plan.md
