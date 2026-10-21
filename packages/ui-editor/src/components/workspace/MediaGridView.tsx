@@ -116,6 +116,9 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
         {filtered.map(asset => (
           <div
             key={asset.id}
+            id={`card-media-${asset.id}`}
+            data-testid="card-media"
+            data-asset-name={asset.name}
             onClick={() => onSelectAsset(asset)}
             onDoubleClick={() => onAddToTimeline(asset)}
             style={{
@@ -139,6 +142,7 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
           >
             {/* Thumbnail Canvas Well */}
             <div
+              id={`thumbnail-media-${asset.id}`}
               style={{
                 position: 'relative',
                 height: '96px',
@@ -193,6 +197,7 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
             {/* Media Information */}
             <div style={{ padding: '8px 10px' }}>
               <div
+                id={`name-media-${asset.id}`}
                 style={{
                   fontSize: '12px',
                   fontWeight: 500,
@@ -215,10 +220,13 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
                   color: '#A4B0BE',
                 }}
               >
-                <span>{asset.resolution ?? '1080p'}</span>
-                <span>{Math.floor(asset.duration)}s</span>
+                <span id={`meta-res-${asset.id}`}>{asset.resolution ?? '1080p'}</span>
+                <span id={`meta-dur-${asset.id}`}>{Math.floor(asset.duration)}s</span>
               </div>
               <button
+                id={`btn-add-timeline-${asset.id}`}
+                data-testid={`btn-add-timeline-${asset.id}`}
+                data-asset-name={asset.name}
                 type="button"
                 onClick={e => {
                   e.stopPropagation();

@@ -84,6 +84,8 @@ export const ImportDropzoneView: React.FC<ImportDropzoneViewProps> = ({
       {/* Hidden Native File Input for real file picking */}
       <input
         ref={fileInputRef}
+        id="file-input-media-import"
+        data-testid="file-input-media-import"
         type="file"
         multiple
         accept="video/*,audio/*,image/*"
@@ -93,6 +95,8 @@ export const ImportDropzoneView: React.FC<ImportDropzoneViewProps> = ({
 
       {/* Main Dashed Dropzone Well (Page 2 & 10) */}
       <div
+        id="dropzone-media-import"
+        data-testid="dropzone-media-import"
         role="region"
         aria-label="Media File Dropzone"
         onDrop={handleDrop}
@@ -122,6 +126,8 @@ export const ImportDropzoneView: React.FC<ImportDropzoneViewProps> = ({
         }}
       >
         <ScarletButton
+          id="btn-add-files-dropzone"
+          data-testid="btn-add-files-dropzone"
           variant="additional-v2"
           size="lg"
           onClick={e => {

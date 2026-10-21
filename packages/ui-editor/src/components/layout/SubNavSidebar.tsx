@@ -54,10 +54,11 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
         <div
           id="subnav-import"
           data-testid="subnav-import"
+          title="Import Media"
           style={getItemStyle('import')}
           onClick={() => onSectionChange('import')}
         >
-          <span>Import</span>
+          <span>Import Media</span>
         </div>
 
         {/* My Files */}

@@ -330,23 +330,27 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <div style={{ display: 'flex', gap: '14px', fontSize: '12px', color: '#A4B0BE' }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                   <input
+                    id="radio-export-stream-copy"
+                    data-testid="radio-export-stream-copy"
                     type="radio"
                     name="wasmMode"
                     value="stream-copy"
                     checked={settings.wasmMode === 'stream-copy'}
                     onChange={() => setSettings({ ...settings, wasmMode: 'stream-copy' })}
                   />
-                  <span>Fast Stream-Copy (-c copy)</span>
+                  <span>Fast WebAssembly Stream Copy (0.1s)</span>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
                   <input
+                    id="radio-export-filter-complex"
+                    data-testid="radio-export-filter-complex"
                     type="radio"
                     name="wasmMode"
                     value="filter-complex-ass"
                     checked={settings.wasmMode === 'filter-complex-ass'}
                     onChange={() => setSettings({ ...settings, wasmMode: 'filter-complex-ass' })}
                   />
-                  <span>Filter_Complex + Burned Subtitles</span>
+                  <span>Full Render with Burned Subtitles</span>
                 </label>
               </div>
             </div>
@@ -354,6 +358,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             {/* Export Progress State when rendering */}
             {isExporting && (
               <div
+                id="export-progress-container"
+                data-testid="export-progress-container"
                 style={{
                   backgroundColor: '#111317',
                   borderRadius: '10px',
@@ -362,11 +368,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 }}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#FFFFFF', marginBottom: '6px' }}>
-                  <span>{exportStage}</span>
-                  <span style={{ fontWeight: 600, color: '#168BFF' }}>{exportProgress}%</span>
+                  <span id="export-progress-stage">{exportStage}</span>
+                  <span id="export-progress-percent" style={{ fontWeight: 600, color: '#168BFF' }}>{exportProgress}%</span>
                 </div>
                 <div style={{ height: '6px', backgroundColor: '#2B303A', borderRadius: '9999px', overflow: 'hidden' }}>
                   <div
+                    id="export-progress-bar"
+                    data-testid="export-progress-bar"
                     style={{
                       height: '100%',
                       width: `${exportProgress}%`,
@@ -397,6 +405,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           }}
         >
           <ScarletButton
+            id="btn-cancel-export"
+            data-testid="btn-cancel-export"
             variant="secondary"
             size="md"
             onClick={onClose}
@@ -406,12 +416,14 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </ScarletButton>
 
           <ScarletButton
+            id="btn-start-export"
+            data-testid="btn-start-export"
             variant="primary"
             size="md"
             onClick={handleStart}
             disabled={isExporting}
           >
-            {isExporting ? 'Exporting...' : 'Start'}
+            {isExporting ? 'Exporting...' : 'Start Export'}
           </ScarletButton>
         </div>
       </div>
