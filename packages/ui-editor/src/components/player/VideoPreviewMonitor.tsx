@@ -70,39 +70,54 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const scrubberTrackRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Robust ref-backed seek coordinator
+  // Robust ref-backed seek coordinator with generation tracking
   const isSeekingRef = useRef(false);
   const pendingSeekTargetRef = useRef<number | null>(null);
   const seekSeqRef = useRef(0);
   const seekTimeoutRef = useRef<number | null>(null);
 
-  const requestVideoSeek = (targetSec: number) => {
+  const executeSeek = (targetSec: number) => {
     const v = videoRef.current;
     if (!v) return;
-
-    if (isSeekingRef.current) {
-      pendingSeekTargetRef.current = targetSec;
-      return;
-    }
 
     const currentSeq = ++seekSeqRef.current;
     isSeekingRef.current = true;
     onSeekLockChange?.(true);
+
+    if (seekTimeoutRef.current) {
+      window.clearTimeout(seekTimeoutRef.current);
+      seekTimeoutRef.current = null;
+    }
 
     try {
       v.currentTime = targetSec;
     } catch {
       isSeekingRef.current = false;
       onSeekLockChange?.(false);
+      return;
     }
 
-    if (seekTimeoutRef.current) window.clearTimeout(seekTimeoutRef.current);
+    // Generation-matched safety watchdog: unlocks if decoder fails to emit 'seeked' within 350ms
     seekTimeoutRef.current = window.setTimeout(() => {
-      if (seekSeqRef.current === currentSeq && isSeekingRef.current) {
-        isSeekingRef.current = false;
-        onSeekLockChange?.(false);
+      if (seekSeqRef.current === currentSeq) {
+        if (pendingSeekTargetRef.current !== null) {
+          const nextTarget = pendingSeekTargetRef.current;
+          pendingSeekTargetRef.current = null;
+          executeSeek(nextTarget);
+        } else {
+          isSeekingRef.current = false;
+          onSeekLockChange?.(false);
+        }
       }
-    }, 250);
+    }, 350);
+  };
+
+  const requestVideoSeek = (targetSec: number) => {
+    if (isSeekingRef.current) {
+      pendingSeekTargetRef.current = targetSec;
+      return;
+    }
+    executeSeek(targetSec);
   };
 
   const handleSeeking = () => {
@@ -111,19 +126,16 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   };
 
   const handleSeeked = () => {
+    // If another seek arrived while in-flight, execute it with a fresh sequence generation
     if (pendingSeekTargetRef.current !== null) {
       const nextTarget = pendingSeekTargetRef.current;
       pendingSeekTargetRef.current = null;
-      const v = videoRef.current;
-      if (v) {
-        try {
-          v.currentTime = nextTarget;
-        } catch {
-          isSeekingRef.current = false;
-          onSeekLockChange?.(false);
-        }
-      }
+      executeSeek(nextTarget);
     } else {
+      if (seekTimeoutRef.current) {
+        window.clearTimeout(seekTimeoutRef.current);
+        seekTimeoutRef.current = null;
+      }
       isSeekingRef.current = false;
       onSeekLockChange?.(false);
     }
@@ -172,14 +184,16 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     v.muted = isMuted;
   }, [volume, isMuted]);
 
-  // Sync mapped source time to HTML5 video element with seek serialization
+  // Sync mapped source time to HTML5 video element with seek serialization and boundary clamping
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const vidDuration = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : 10;
-    const targetOffset = sourceTimeOffset !== undefined
-      ? (sourceTimeOffset % vidDuration)
-      : (currentTime % vidDuration);
+    const rawTarget = sourceTimeOffset !== undefined ? sourceTimeOffset : currentTime;
+    if (rawTarget > vidDuration + 0.05) {
+      console.warn(`[VideoPreviewMonitor] Target ${rawTarget.toFixed(2)}s exceeds video duration ${vidDuration.toFixed(2)}s; clamping cleanly without wrap.`);
+    }
+    const targetOffset = Math.max(0, Math.min(vidDuration, rawTarget));
 
     if (Math.abs(v.currentTime - targetOffset) > 0.30) {
       requestVideoSeek(targetOffset);

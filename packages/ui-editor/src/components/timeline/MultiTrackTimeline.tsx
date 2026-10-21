@@ -113,6 +113,15 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const videoClips = clips.filter(c => c.trackId === 'track_video');
   const audioClips = clips.filter(c => c.trackId === 'track_audio');
 
+  // Discover and render all dynamic/custom tracks added via Add Track or plugins
+  const customTrackIds = Array.from(
+    new Set(
+      clips
+        .map(c => c.trackId)
+        .filter(id => !['track_title', 'track_video', 'track_audio'].includes(id))
+    )
+  ).sort();
+
   return (
     <div
       style={{
@@ -201,6 +210,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         <div
           style={{
             height: '44px',
+            borderBottom: customTrackIds.length > 0 ? '1px solid #2B303A' : 'none',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-around',
@@ -213,6 +223,27 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           <IconVolumeMute size={12} color="#636E7B" />
           <IconLock size={12} color="#636E7B" />
         </div>
+
+        {/* Dynamic Custom Track Headers */}
+        {customTrackIds.map((trackId, idx) => (
+          <div
+            key={trackId}
+            style={{
+              height: '40px',
+              borderBottom: '1px solid #2B303A',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-around',
+              padding: '0 4px',
+              color: '#FFA502',
+            }}
+            title={`Custom Overlay Track ${idx + 1} (${trackId})`}
+          >
+            <span style={{ fontSize: '11px', fontWeight: 600 }}>T{idx + 4}</span>
+            <IconEye size={12} color="#A4B0BE" />
+            <IconLock size={12} color="#636E7B" />
+          </div>
+        ))}
       </div>
 
       {/* Scrollable Tracks Canvas Well */}
@@ -614,6 +645,63 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               );
             })}
           </div>
+
+          {/* Dynamic Custom Tracks Lanes */}
+          {customTrackIds.map((trackId, trackIdx) => {
+            const trackClips = clips.filter(c => c.trackId === trackId);
+            return (
+              <div
+                key={trackId}
+                style={{
+                  height: '40px',
+                  position: 'relative',
+                  backgroundColor: trackIdx % 2 === 0 ? '#181B20' : '#14171C',
+                  borderBottom: '1px solid #22262E',
+                }}
+              >
+                {trackClips.map(clip => {
+                  const isSelected = clip.id === selectedClipId;
+                  const clipStart = getClipStart(clip);
+                  const clipDur = getClipDuration(clip);
+                  return (
+                    <div
+                      key={clip.id}
+                      onClick={e => {
+                        e.stopPropagation();
+                        onSelectClip?.(clip.id);
+                      }}
+                      onDoubleClick={e => {
+                        e.stopPropagation();
+                        onSeek(clipStart);
+                      }}
+                      title={`${clip.title} (Double-click to seek)`}
+                      style={{
+                        position: 'absolute',
+                        left: `${clipStart * pxPerSec}px`,
+                        width: `${Math.max(20, clipDur * pxPerSec)}px`,
+                        height: '30px',
+                        top: '5px',
+                        backgroundColor: clip.color || '#FFA502',
+                        border: isSelected ? '2px solid #FFD32A' : 'none',
+                        borderRadius: '6px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 8px',
+                        color: '#FFFFFF',
+                        boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : 'none',
+                        overflow: 'hidden',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {clip.title}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

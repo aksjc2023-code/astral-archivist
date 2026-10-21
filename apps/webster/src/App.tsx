@@ -19,8 +19,14 @@ import {
   getProjectDuration,
   getClipAtTimelineTime,
   timelineToSourceTime,
+  sourceToTimelineTime,
   purgeFillersAndPauses,
   restoreAllTokens,
+  validateWordToken,
+  validateTimelineClip,
+  asTimelineSeconds,
+  asSourceSeconds,
+  asSeconds,
 } from '@astral/core';
 
 import {
@@ -77,6 +83,21 @@ export const App: React.FC = () => {
   // Ref to retain and cleanup seek-lock timeout
   const seekLockTimeoutRef = useRef<number | null>(null);
 
+  // Retain all allocated blob URLs to cleanly revoke on delete/unmount
+  const blobUrlsRef = useRef<Set<string>>(new Set());
+
+  // Cleanup all allocated blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      blobUrlsRef.current.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
+      });
+      blobUrlsRef.current.clear();
+    };
+  }, []);
+
   // Live Telemetry System State (ADR-001 & Architecture Plan)
   const [telemetry, setTelemetry] = useState<TelemetryState>({
     searchLatencyMs: 0.045,
@@ -100,13 +121,13 @@ export const App: React.FC = () => {
 
   // Active video clip dynamically linked to whichever clip is currently under timeline playhead
   const activeClip = useMemo(() => {
-    return getClipAtTimelineTime(currentTime, clips, 'track_video') ?? clips.find(c => c.trackId === 'track_video');
+    return getClipAtTimelineTime(asTimelineSeconds(currentTime), clips, 'track_video') ?? clips.find(c => c.trackId === 'track_video');
   }, [clips, currentTime]);
 
   // Exact mapped source offset within the active video clip
   const activeClipSourceTime = useMemo(() => {
-    if (!activeClip) return 0;
-    return timelineToSourceTime(currentTime, activeClip);
+    if (!activeClip) return asSourceSeconds(0);
+    return timelineToSourceTime(asTimelineSeconds(currentTime), activeClip);
   }, [currentTime, activeClip]);
 
   const activeVideoUrl = activeClip?.videoUrl ?? 'https://www.w3schools.com/html/mov_bbb.mp4';
@@ -152,7 +173,12 @@ export const App: React.FC = () => {
   const handleToggleDeleteToken = useCallback((tokenId: string) => {
     pushHistory(tokens, clips);
     setTokens(prev =>
-      prev.map(t => (t.id === tokenId ? { ...t, deleted: !t.deleted } : t))
+      prev.map(t => {
+        if (t.id !== tokenId) return t;
+        const updated = { ...t, deleted: !t.deleted };
+        validateWordToken(updated);
+        return updated;
+      })
     );
   }, [pushHistory, tokens, clips]);
 
@@ -173,7 +199,12 @@ export const App: React.FC = () => {
   const handleEditTokenText = useCallback((tokenId: string, newText: string) => {
     pushHistory(tokens, clips);
     setTokens(prev =>
-      prev.map(t => (t.id === tokenId ? { ...t, text: newText, isEdited: true } : t))
+      prev.map(t => {
+        if (t.id !== tokenId) return t;
+        const updated = { ...t, text: newText, isEdited: true };
+        validateWordToken(updated);
+        return updated;
+      })
     );
   }, [pushHistory, tokens, clips]);
 
@@ -181,8 +212,8 @@ export const App: React.FC = () => {
   const handleSplitClip = useCallback(() => {
     const targetClip = clips.find(c => {
       if (c.trackId !== 'track_video') return false;
-      const start = c.timelineStart ?? c.sourceStart ?? 0;
-      const dur = c.timelineDuration ?? c.duration ?? 0;
+      const start = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
+      const dur = c.timelineDuration ?? c.duration ?? asSeconds(0);
       return currentTime > start + 0.2 && currentTime < start + dur - 0.2;
     });
 
@@ -193,10 +224,10 @@ export const App: React.FC = () => {
 
     pushHistory(tokens, clips);
 
-    const clipStart = targetClip.timelineStart ?? targetClip.sourceStart ?? 0;
-    const clipDur = targetClip.timelineDuration ?? targetClip.duration ?? 0;
-    const clipIn = targetClip.sourceIn ?? 0;
-    const clipOut = targetClip.sourceOut ?? (clipIn + clipDur);
+    const clipStart = targetClip.timelineStart ?? targetClip.sourceStart ?? asTimelineSeconds(0);
+    const clipDur = targetClip.timelineDuration ?? targetClip.duration ?? asSeconds(0);
+    const clipIn = targetClip.sourceIn ?? asSourceSeconds(0);
+    const clipOut = targetClip.sourceOut ?? asSourceSeconds(clipIn + clipDur);
 
     const splitOffset = Number((currentTime - clipStart).toFixed(2));
     const durationB = Number((clipDur - splitOffset).toFixed(2));
@@ -209,27 +240,31 @@ export const App: React.FC = () => {
     const clipA: TimelineClip = {
       ...targetClip,
       id: `${targetClip.id}_a_${Date.now()}`,
-      timelineStart: clipStart,
-      timelineDuration: splitOffset,
-      sourceIn: sourceInA,
-      sourceOut: sourceOutA,
-      sourceStart: clipStart,
-      duration: splitOffset,
+      timelineStart: asTimelineSeconds(clipStart),
+      timelineDuration: asSeconds(splitOffset),
+      sourceIn: asSourceSeconds(sourceInA),
+      sourceOut: asSourceSeconds(sourceOutA),
+      sourceStart: asTimelineSeconds(clipStart),
+      duration: asSeconds(splitOffset),
       isSelected: false,
     };
 
     const clipB: TimelineClip = {
       ...targetClip,
       id: `${targetClip.id}_b_${Date.now()}`,
-      timelineStart: Number(currentTime.toFixed(2)),
-      timelineDuration: durationB,
-      sourceIn: sourceInB,
-      sourceOut: sourceOutB,
-      sourceStart: Number(currentTime.toFixed(2)),
-      duration: durationB,
+      timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+      timelineDuration: asSeconds(durationB),
+      sourceIn: asSourceSeconds(sourceInB),
+      sourceOut: asSourceSeconds(sourceOutB),
+      sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+      duration: asSeconds(durationB),
       isSelected: true,
       transitionIn: '][',
     };
+
+    // Domain boundary validation before state commit
+    validateTimelineClip(clipA);
+    validateTimelineClip(clipB);
 
     setClips(prev => {
       const idx = prev.findIndex(c => c.id === targetClip.id);
@@ -247,18 +282,20 @@ export const App: React.FC = () => {
     pushHistory(tokens, clips);
     setClips(prev => prev.map(c => {
       if (c.id !== clipId) return c;
-      const curStart = c.timelineStart ?? c.sourceStart ?? 0;
-      const curDur = c.timelineDuration ?? c.duration ?? 0;
-      const curIn = c.sourceIn ?? 0;
-      const curOut = c.sourceOut ?? (curIn + curDur);
+      const curStart = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
+      const curDur = c.timelineDuration ?? c.duration ?? asSeconds(0);
+      const curIn = c.sourceIn ?? asSourceSeconds(0);
+      const curOut = c.sourceOut ?? asSourceSeconds(curIn + curDur);
 
       if (side === 'left') {
         const maxDelta = curDur - 0.5; // Min duration 0.5s
-        const appliedDelta = Math.max(-curStart, Math.min(maxDelta, deltaSec));
-        const newStart = Number((curStart + appliedDelta).toFixed(2));
-        const newDur = Number((curDur - appliedDelta).toFixed(2));
-        const newIn = Number((curIn + appliedDelta).toFixed(2));
-        return {
+        // Guard against negative start AND negative sourceIn!
+        const maxLeftExtension = Math.min(curStart, curIn);
+        const appliedDelta = Math.max(-maxLeftExtension, Math.min(maxDelta, deltaSec));
+        const newStart = asTimelineSeconds(Number((curStart + appliedDelta).toFixed(2)));
+        const newDur = asSeconds(Number((curDur - appliedDelta).toFixed(2)));
+        const newIn = asSourceSeconds(Number((curIn + appliedDelta).toFixed(2)));
+        const updated: TimelineClip = {
           ...c,
           timelineStart: newStart,
           timelineDuration: newDur,
@@ -267,15 +304,19 @@ export const App: React.FC = () => {
           sourceStart: newStart,
           duration: newDur,
         };
+        validateTimelineClip(updated);
+        return updated;
       } else {
-        const newDur = Math.max(0.5, Number((curDur + deltaSec).toFixed(2)));
-        const newOut = Number((curIn + newDur).toFixed(2));
-        return {
+        const newDur = asSeconds(Math.max(0.5, Number((curDur + deltaSec).toFixed(2))));
+        const newOut = asSourceSeconds(Number((curIn + newDur).toFixed(2)));
+        const updated: TimelineClip = {
           ...c,
           timelineDuration: newDur,
           sourceOut: newOut,
           duration: newDur,
         };
+        validateTimelineClip(updated);
+        return updated;
       }
     }));
   }, [clips, pushHistory, tokens]);
@@ -288,14 +329,15 @@ export const App: React.FC = () => {
       id: `clip_custom_${Date.now()}`,
       trackId: `track_custom_${trackNum}`,
       title: `Track ${trackNum} Overlay`,
-      timelineStart: 0,
-      timelineDuration: 15.0,
-      sourceIn: 0,
-      sourceOut: 15.0,
-      sourceStart: 0,
-      duration: 15.0,
+      timelineStart: asTimelineSeconds(0),
+      timelineDuration: asSeconds(15.0),
+      sourceIn: asSourceSeconds(0),
+      sourceOut: asSourceSeconds(15.0),
+      sourceStart: asTimelineSeconds(0),
+      duration: asSeconds(15.0),
       color: '#FFA502',
     };
+    validateTimelineClip(newClip);
     setClips(prev => [...prev, newClip]);
     setSelectedClipId(newClip.id);
   }, [clips]);
@@ -306,6 +348,13 @@ export const App: React.FC = () => {
       const clipToDelete = clips.find(c => c.id === selectedClipId);
       if (clipToDelete) {
         pushHistory(tokens, clips);
+        // Cleanly revoke blob URL if this clip was backed by an imported local file
+        if (clipToDelete.videoUrl?.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(clipToDelete.videoUrl);
+            blobUrlsRef.current.delete(clipToDelete.videoUrl);
+          } catch {}
+        }
         setClips(prev => prev.filter(c => c.id !== selectedClipId));
         setSelectedClipId(undefined);
         return;
@@ -324,8 +373,8 @@ export const App: React.FC = () => {
 
     const videoClips = clips.filter(c => c.trackId === 'track_video');
     const lastEnd = videoClips.reduce((max, c) => {
-      const start = c.timelineStart ?? c.sourceStart ?? 0;
-      const dur = c.timelineDuration ?? c.duration ?? 0;
+      const start = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
+      const dur = c.timelineDuration ?? c.duration ?? asSeconds(0);
       return Math.max(max, start + dur);
     }, 0);
 
@@ -333,12 +382,12 @@ export const App: React.FC = () => {
       id: `clip_v_${Date.now()}`,
       trackId: 'track_video',
       title: asset.name,
-      timelineStart: Number(lastEnd.toFixed(2)),
-      timelineDuration: asset.duration,
-      sourceIn: 0,
-      sourceOut: asset.duration,
-      sourceStart: Number(lastEnd.toFixed(2)),
-      duration: asset.duration,
+      timelineStart: asTimelineSeconds(Number(lastEnd.toFixed(2))),
+      timelineDuration: asSeconds(asset.duration),
+      sourceIn: asSourceSeconds(0),
+      sourceOut: asSourceSeconds(asset.duration),
+      sourceStart: asTimelineSeconds(Number(lastEnd.toFixed(2))),
+      duration: asSeconds(asset.duration),
       color: '#4B6584',
       mediaId: asset.id,
       locator: asset.locator ?? asset.videoUrl ?? 'https://www.w3schools.com/html/mov_bbb.mp4',
@@ -347,6 +396,7 @@ export const App: React.FC = () => {
       hasWaveform: true,
       transitionIn: videoClips.length > 0 ? '][' : undefined,
     };
+    validateTimelineClip(newClip);
 
     setClips(prev => [...prev, newClip]);
     setSelectedClipId(newClip.id);
@@ -354,17 +404,18 @@ export const App: React.FC = () => {
     setCurrentTime(newClip.timelineStart);
   }, [clips, pushHistory, tokens]);
 
-  // Real File Drag-and-Drop or Picker handling
+  // Real File Drag-and-Drop or Picker handling with tracked blob URLs
   const handleFilesAdded = useCallback((fileList: File[]) => {
     const newAssets: MediaAsset[] = fileList.map((f, idx) => {
       const url = URL.createObjectURL(f);
+      blobUrlsRef.current.add(url);
       const isVid = f.type.startsWith('video') || f.name.endsWith('.mp4') || f.name.endsWith('.mov') || f.name.endsWith('.webm');
       const isAud = f.type.startsWith('audio') || f.name.endsWith('.mp3') || f.name.endsWith('.wav');
       return {
         id: `asset_upload_${Date.now()}_${idx}`,
         name: f.name,
         type: isVid ? 'video' : isAud ? 'audio' : 'image',
-        duration: 10.0,
+        duration: asSeconds(10.0),
         thumbnailUrl: isVid
           ? 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=400&q=80'
           : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80',
@@ -401,14 +452,15 @@ export const App: React.FC = () => {
         id: `title_${Date.now()}`,
         trackId: 'track_title',
         title: `TT ${effectName}`,
-        timelineStart: Number(currentTime.toFixed(2)),
-        timelineDuration: 8.0,
-        sourceIn: 0,
-        sourceOut: 8.0,
-        sourceStart: Number(currentTime.toFixed(2)),
-        duration: 8.0,
+        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineDuration: asSeconds(8.0),
+        sourceIn: asSourceSeconds(0),
+        sourceOut: asSourceSeconds(8.0),
+        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        duration: asSeconds(8.0),
         color: '#8854D0',
       };
+      validateTimelineClip(newTitleClip);
       setClips(prev => [...prev, newTitleClip]);
       setSelectedClipId(newTitleClip.id);
     } else {
@@ -459,7 +511,34 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Playback Frame Loop: STRICTLY STOPPED WHEN PAUSED
+  // Unified seek coordinator: leaps over cut segments if target falls into a cut interval
+  const handleSeek = useCallback((targetTime: number) => {
+    let finalTime = targetTime;
+    if (rebuildResult.segments.length > 0) {
+      const targetTimeline = asTimelineSeconds(targetTime);
+      const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
+        ?? clips.find(c => c.trackId === 'track_video');
+      if (currentClip) {
+        const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
+        const firstSeg = rebuildResult.segments[0];
+        const lastSeg = rebuildResult.segments[rebuildResult.segments.length - 1];
+        if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
+          const jumpResult = getNextValidTime(sourcePos, rebuildResult.segments);
+          if (jumpResult.didJump) {
+            finalTime = sourceToTimelineTime(jumpResult.nextTime, currentClip);
+            setTelemetry(prev => ({
+              ...prev,
+              searchLatencyMs: jumpResult.searchLatencyMs,
+              recoveryLog: `[RIPPLE SEEK] O(log N) leap across cut gap to ${jumpResult.nextTime.toFixed(2)}s (${jumpResult.searchLatencyMs}ms).`,
+            }));
+          }
+        }
+      }
+    }
+    setCurrentTime(Math.max(0, Math.min(projectDuration, finalTime)));
+  }, [rebuildResult.segments, clips, projectDuration]);
+
+  // Playback Frame Loop: STRICTLY STOPPED WHEN PAUSED + RIPPLE LEAPS ACROSS CUTS
   useEffect(() => {
     if (!isPlaying) return; // Completely STOP loop when paused to eliminate re-renders!
 
@@ -471,7 +550,33 @@ export const App: React.FC = () => {
       lastTimestamp = timestamp;
 
       setCurrentTime(prevTime => {
-        const rawNext = prevTime + deltaSec;
+        let rawNext = prevTime + deltaSec;
+
+        // Transcript ripple cuts integration:
+        // If playhead falls into a cut interval in the active video clip, leap over it via O(log N) binary search!
+        if (rebuildResult.segments.length > 0) {
+          const targetTimeline = asTimelineSeconds(rawNext);
+          const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
+            ?? clips.find(c => c.trackId === 'track_video');
+
+          if (currentClip) {
+            const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
+            const firstSeg = rebuildResult.segments[0];
+            const lastSeg = rebuildResult.segments[rebuildResult.segments.length - 1];
+
+            if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
+              const jumpResult = getNextValidTime(sourcePos, rebuildResult.segments);
+              if (jumpResult.didJump) {
+                rawNext = sourceToTimelineTime(jumpResult.nextTime, currentClip);
+                setTelemetry(prev => ({
+                  ...prev,
+                  searchLatencyMs: jumpResult.searchLatencyMs,
+                  recoveryLog: `[RIPPLE PLAYBACK] O(log N) leap across cut gap to ${jumpResult.nextTime.toFixed(2)}s (${jumpResult.searchLatencyMs}ms).`,
+                }));
+              }
+            }
+          }
+        }
 
         // If past composition project duration, pause and loop back
         if (rawNext >= projectDuration) {
@@ -487,7 +592,7 @@ export const App: React.FC = () => {
 
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, projectDuration, playbackSpeed]);
+  }, [isPlaying, projectDuration, playbackSpeed, clips, rebuildResult.segments]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -561,7 +666,7 @@ export const App: React.FC = () => {
               onPurgeFillers={handlePurgeFillers}
               onRestoreAllTokens={handleRestoreAll}
               onEditTokenText={handleEditTokenText}
-              onSeekToTime={t => setCurrentTime(t)}
+              onSeekToTime={handleSeek}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */
@@ -590,7 +695,7 @@ export const App: React.FC = () => {
               onSelectAsset={asset => {
                 const linkedClip = clips.find(c => c.mediaId === asset.id);
                 if (linkedClip) {
-                  setCurrentTime(linkedClip.timelineStart ?? linkedClip.sourceStart ?? 0);
+                  handleSeek(linkedClip.timelineStart ?? linkedClip.sourceStart ?? 0);
                   setSelectedClipId(linkedClip.id);
                 }
               }}
@@ -618,12 +723,12 @@ export const App: React.FC = () => {
             colorAdjustments={toolSettings.colorAdjustments}
             onClearActiveFilter={() => setActiveFilter('none')}
             onTogglePlay={() => setIsPlaying(!isPlaying)}
-            onSeek={t => setCurrentTime(t)}
+            onSeek={handleSeek}
             onAspectRatioChange={setAspectRatio}
-            onFirstFrame={() => setCurrentTime(0)}
-            onLastFrame={() => setCurrentTime(projectDuration)}
-            onPrevFrame={() => setCurrentTime(Math.max(0, currentTime - 0.04))}
-            onNextFrame={() => setCurrentTime(Math.min(projectDuration, currentTime + 0.04))}
+            onFirstFrame={() => handleSeek(0)}
+            onLastFrame={() => handleSeek(projectDuration)}
+            onPrevFrame={() => handleSeek(Math.max(0, currentTime - 0.04))}
+            onNextFrame={() => handleSeek(Math.min(projectDuration, currentTime + 0.04))}
           />
         </div>
       </div>
@@ -662,7 +767,7 @@ export const App: React.FC = () => {
           markers={markers}
           scale={timelineScale}
           selectedClipId={selectedClipId}
-          onSeek={t => setCurrentTime(t)}
+          onSeek={handleSeek}
           onSelectClip={setSelectedClipId}
           onTrimClip={handleTrimClip}
           onAddTrack={handleAddTrack}

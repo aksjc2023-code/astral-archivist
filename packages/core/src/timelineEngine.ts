@@ -6,6 +6,10 @@ import {
   SourceSeconds,
   VirtualSeconds,
   Seconds,
+  asTimelineSeconds,
+  asSourceSeconds,
+  asVirtualSeconds,
+  asSeconds,
 } from './types';
 
 /**
@@ -81,22 +85,22 @@ export function buildPlaybackSegments(
   const segments: PlaybackSegment[] = [];
 
   const rawTotalSource = validTokens.length > 0 
-    ? (validTokens[validTokens.length - 1]?.end ?? 0) 
-    : 0;
+    ? (validTokens[validTokens.length - 1]?.end ?? asSourceSeconds(0)) 
+    : asSourceSeconds(0);
 
   if (keptTokens.length === 0) {
     const elapsed = clock.now() - startTime;
     return {
       segments: [],
       rebuildLatencyMs: Number(elapsed.toFixed(3)),
-      totalVirtualDuration: 0,
+      totalVirtualDuration: asVirtualSeconds(0),
       totalSourceDuration: rawTotalSource,
-      timeSavedSec: rawTotalSource,
+      timeSavedSec: asSeconds(rawTotalSource),
     };
   }
 
-  let currentStart = keptTokens[0]?.start ?? 0;
-  let currentEnd = keptTokens[0]?.end ?? 0;
+  let currentStart = keptTokens[0]?.start ?? asSourceSeconds(0);
+  let currentEnd = keptTokens[0]?.end ?? asSourceSeconds(0);
   let segIdCounter = 1;
 
   for (let i = 1; i < keptTokens.length; i++) {
@@ -109,7 +113,7 @@ export function buildPlaybackSegments(
 
     // Check if tokens can coalesce: monotonic order and gap <= 85ms
     if (gap <= EPSILON_MERGE_SEC && currToken.start >= currentStart) {
-      currentEnd = Math.max(currentEnd, currToken.end);
+      currentEnd = asSourceSeconds(Math.max(currentEnd, currToken.end));
     } else {
       // Close active segment if it satisfies minimum duration guard (30ms)
       const duration = currentEnd - currentStart;
@@ -118,9 +122,9 @@ export function buildPlaybackSegments(
           id: `seg_${segIdCounter++}`,
           sourceStart: currentStart,
           sourceEnd: currentEnd,
-          virtualStart: 0, // Assigned in bijective mapping pass
-          virtualEnd: 0,
-          duration,
+          virtualStart: asVirtualSeconds(0), // Assigned in bijective mapping pass
+          virtualEnd: asVirtualSeconds(0),
+          duration: asSeconds(duration),
         });
       }
       currentStart = currToken.start;
@@ -135,9 +139,9 @@ export function buildPlaybackSegments(
       id: `seg_${segIdCounter++}`,
       sourceStart: currentStart,
       sourceEnd: currentEnd,
-      virtualStart: 0,
-      virtualEnd: 0,
-      duration: finalDuration,
+      virtualStart: asVirtualSeconds(0),
+      virtualEnd: asVirtualSeconds(0),
+      duration: asSeconds(finalDuration),
     });
   }
 
@@ -146,9 +150,9 @@ export function buildPlaybackSegments(
   for (let k = 0; k < segments.length; k++) {
     const seg = segments[k];
     if (!seg) continue;
-    seg.virtualStart = cumulativeVirtual;
+    seg.virtualStart = asVirtualSeconds(cumulativeVirtual);
     cumulativeVirtual += seg.duration;
-    seg.virtualEnd = cumulativeVirtual;
+    seg.virtualEnd = asVirtualSeconds(cumulativeVirtual);
   }
 
   const timeSaved = Math.max(0, rawTotalSource - cumulativeVirtual);
@@ -157,9 +161,9 @@ export function buildPlaybackSegments(
   return {
     segments,
     rebuildLatencyMs: Number(elapsed.toFixed(3)),
-    totalVirtualDuration: cumulativeVirtual,
+    totalVirtualDuration: asVirtualSeconds(cumulativeVirtual),
     totalSourceDuration: rawTotalSource,
-    timeSavedSec: Number(timeSaved.toFixed(2)),
+    timeSavedSec: asSeconds(Number(timeSaved.toFixed(2))),
   };
 }
 
@@ -260,59 +264,59 @@ export function getNextValidTime(
  * Bijective Piecewise-Linear Mapping: Source Media Timestamp -> Virtual Timeline Timestamp
  */
 export function sourceToVirtualTime(sourceTime: SourceSeconds, segments: readonly PlaybackSegment[]): VirtualSeconds {
-  if (segments.length === 0) return 0;
+  if (segments.length === 0) return asVirtualSeconds(0);
   
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (!seg) continue;
     if (sourceTime >= seg.sourceStart && sourceTime <= seg.sourceEnd) {
-      return seg.virtualStart + (sourceTime - seg.sourceStart);
+      return asVirtualSeconds(seg.virtualStart + (sourceTime - seg.sourceStart));
     }
     if (sourceTime < seg.sourceStart) {
-      return seg.virtualStart;
+      return asVirtualSeconds(seg.virtualStart);
     }
   }
   const last = segments[segments.length - 1];
-  return last ? last.virtualEnd : 0;
+  return last ? last.virtualEnd : asVirtualSeconds(0);
 }
 
 /**
  * Inverse Bijective Mapping: Virtual Timeline Timestamp -> Source Media Timestamp
  */
 export function virtualToSourceTime(virtualTime: VirtualSeconds, segments: readonly PlaybackSegment[]): SourceSeconds {
-  if (segments.length === 0) return 0;
+  if (segments.length === 0) return asSourceSeconds(0);
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (!seg) continue;
     if (virtualTime >= seg.virtualStart && virtualTime <= seg.virtualEnd) {
-      return seg.sourceStart + (virtualTime - seg.virtualStart);
+      return asSourceSeconds(seg.sourceStart + (virtualTime - seg.virtualStart));
     }
   }
   const last = segments[segments.length - 1];
-  return last ? last.sourceEnd : 0;
+  return last ? last.sourceEnd : asSourceSeconds(0);
 }
 
 /**
  * Maps a composition timeline timestamp to the active source offset within a clip
  */
 export function timelineToSourceTime(timelineTime: TimelineSeconds, clip: TimelineClip): SourceSeconds {
-  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
-  const dur = clip.timelineDuration ?? clip.duration ?? 0;
-  const inPoint = clip.sourceIn ?? 0;
+  const start = clip.timelineStart ?? clip.sourceStart ?? asTimelineSeconds(0);
+  const dur = clip.timelineDuration ?? clip.duration ?? asSeconds(0);
+  const inPoint = clip.sourceIn ?? asSourceSeconds(0);
   const offset = Math.max(0, Math.min(dur, timelineTime - start));
-  return inPoint + offset;
+  return asSourceSeconds(inPoint + offset);
 }
 
 /**
  * Maps an offset within a clip's source media back to composition timeline time
  */
 export function sourceToTimelineTime(sourceTime: SourceSeconds, clip: TimelineClip): TimelineSeconds {
-  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
-  const dur = clip.timelineDuration ?? clip.duration ?? 0;
-  const inPoint = clip.sourceIn ?? 0;
+  const start = clip.timelineStart ?? clip.sourceStart ?? asTimelineSeconds(0);
+  const dur = clip.timelineDuration ?? clip.duration ?? asSeconds(0);
+  const inPoint = clip.sourceIn ?? asSourceSeconds(0);
   const offset = Math.max(0, Math.min(dur, sourceTime - inPoint));
-  return start + offset;
+  return asTimelineSeconds(start + offset);
 }
 
 /**
@@ -340,7 +344,7 @@ export function getProjectDuration(clips: readonly TimelineClip[], minDuration =
     const dur = c.timelineDuration ?? c.duration ?? 0;
     return Math.max(max, start + dur);
   }, 0);
-  return Math.max(minDuration, maxEnd);
+  return asSeconds(Math.max(minDuration, maxEnd));
 }
 
 /**

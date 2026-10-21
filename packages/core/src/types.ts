@@ -4,11 +4,19 @@
  * Environment-neutral: zero DOM / React dependencies
  */
 
+declare const __brand: unique symbol;
+
 /** Branded / Semantic time units in seconds */
 export type Seconds = number;
-export type TimelineSeconds = number;
-export type SourceSeconds = number;
-export type VirtualSeconds = number;
+export type TimelineSeconds = number & { readonly [__brand]: 'TimelineSeconds' };
+export type SourceSeconds = number & { readonly [__brand]: 'SourceSeconds' };
+export type VirtualSeconds = number & { readonly [__brand]: 'VirtualSeconds' };
+
+/** Type-safe constructors at domain input boundaries */
+export const asTimelineSeconds = (s: number): TimelineSeconds => s as TimelineSeconds;
+export const asSourceSeconds = (s: number): SourceSeconds => s as SourceSeconds;
+export const asVirtualSeconds = (s: number): VirtualSeconds => s as VirtualSeconds;
+export const asSeconds = (s: number): Seconds => s;
 
 export interface WordToken {
   id: string;
@@ -83,8 +91,8 @@ export function validateWordToken(token: WordToken): void {
 }
 
 export function validateTimelineClip(clip: TimelineClip): void {
-  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
-  const dur = clip.timelineDuration ?? clip.duration ?? 0;
+  const start = clip.timelineStart ?? clip.sourceStart ?? asTimelineSeconds(0);
+  const dur = clip.timelineDuration ?? clip.duration ?? asSeconds(0);
   if (!Number.isFinite(start) || start < 0) {
     throw new Error(`Invalid clip timelineStart: ${start}`);
   }
@@ -94,8 +102,19 @@ export function validateTimelineClip(clip: TimelineClip): void {
   if (clip.sourceIn !== undefined && (!Number.isFinite(clip.sourceIn) || clip.sourceIn < 0)) {
     throw new Error(`Invalid clip sourceIn: ${clip.sourceIn}`);
   }
-  if (clip.sourceOut !== undefined && (!Number.isFinite(clip.sourceOut) || clip.sourceOut < (clip.sourceIn ?? 0))) {
-    throw new Error(`Invalid clip sourceOut: ${clip.sourceOut}`);
+  if (clip.sourceOut !== undefined) {
+    if (!Number.isFinite(clip.sourceOut) || clip.sourceOut < (clip.sourceIn ?? asSourceSeconds(0))) {
+      throw new Error(`Invalid clip sourceOut: ${clip.sourceOut}`);
+    }
+    // Verify source range matches composition duration for a 1x clip
+    if (clip.sourceIn !== undefined) {
+      const sourceDur = clip.sourceOut - clip.sourceIn;
+      if (Math.abs(sourceDur - dur) > 0.05) {
+        throw new Error(
+          `Clip source range [${clip.sourceIn}, ${clip.sourceOut}] duration (${sourceDur.toFixed(2)}s) does not match composition duration (${dur.toFixed(2)}s)`
+        );
+      }
+    }
   }
 }
 

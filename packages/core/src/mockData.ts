@@ -1,4 +1,12 @@
-import { MediaAsset, WordToken, TimelineClip, MarkerFlag, ToolSettings } from './types';
+import {
+  MediaAsset,
+  WordToken,
+  TimelineClip,
+  MarkerFlag,
+  ToolSettings,
+  asSourceSeconds,
+  asTimelineSeconds,
+} from './types';
 
 /**
  * 9 Media Assets from Page 1 & 2 of Movavi 2020 Redesign PDF
@@ -117,7 +125,7 @@ export const INITIAL_MEDIA_ASSETS: MediaAsset[] = [
  * 42 Word Tokens Spanning the Summer Festival Story
  * Embedded with 5 fillers, 4 pauses, and B-roll keyword anchors
  */
-export const INITIAL_WORD_TOKENS: WordToken[] = [
+const RAW_WORD_TOKENS: (Omit<WordToken, 'start' | 'end'> & { start: number; end: number })[] = [
   { id: 'w_1', text: 'Welcome', start: 0.00, end: 0.65, deleted: false },
   { id: 'w_2', text: 'back', start: 0.70, end: 1.05, deleted: false },
   { id: 'w_3', text: 'everyone.', start: 1.10, end: 1.80, deleted: false },
@@ -171,10 +179,21 @@ export const INITIAL_WORD_TOKENS: WordToken[] = [
   { id: 'w_42', text: 'unforgettable.', start: 27.25, end: 28.50, deleted: false },
 ];
 
+export const INITIAL_WORD_TOKENS: WordToken[] = RAW_WORD_TOKENS.map(t => ({
+  ...t,
+  start: asSourceSeconds(t.start),
+  end: asSourceSeconds(t.end),
+}));
+
 /**
  * Initial Timeline Multi-Track Configuration Matching Page 1
  */
-export const INITIAL_TIMELINE_CLIPS: TimelineClip[] = [
+const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'sourceIn' | 'sourceOut' | 'sourceStart'> & {
+  timelineStart: number;
+  sourceIn: number;
+  sourceOut: number;
+  sourceStart?: number;
+})[] = [
   // Track 1: Purple Titles
   {
     id: 'clip_title_1',
@@ -287,6 +306,14 @@ export const INITIAL_TIMELINE_CLIPS: TimelineClip[] = [
     hasWaveform: true,
   },
 ];
+
+export const INITIAL_TIMELINE_CLIPS: TimelineClip[] = RAW_TIMELINE_CLIPS.map(c => ({
+  ...c,
+  timelineStart: asTimelineSeconds(c.timelineStart),
+  sourceIn: asSourceSeconds(c.sourceIn),
+  sourceOut: asSourceSeconds(c.sourceOut),
+  sourceStart: c.sourceStart !== undefined ? asTimelineSeconds(c.sourceStart) : undefined,
+}));
 
 /**
  * 4 Marker Flags Along Timeline Ruler
