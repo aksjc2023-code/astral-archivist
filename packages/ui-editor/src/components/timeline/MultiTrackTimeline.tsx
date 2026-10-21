@@ -3,6 +3,7 @@ import { TimelineClip, MarkerFlag, PlaybackSegment, formatTimecode } from '@astr
 import {
   IconEye,
   IconLock,
+  IconVolume,
   IconVolumeMute,
   IconTitles,
 } from '../common/ScarletIcons';
@@ -11,6 +12,7 @@ export interface TrackControlState {
   hidden?: boolean;
   locked?: boolean;
   muted?: boolean;
+  volume?: number; // 0 to 200 (percent), default 100
 }
 
 export interface MultiTrackTimelineProps {
@@ -25,6 +27,8 @@ export interface MultiTrackTimelineProps {
   onToggleTrackHidden?: (trackId: string) => void;
   onToggleTrackLocked?: (trackId: string) => void;
   onToggleTrackMuted?: (trackId: string) => void;
+  onTrackVolumeChange?: (trackId: string, volume: number) => void;
+  onClipVolumeChange?: (clipId: string, volume: number) => void;
   onSeek: (time: number) => void;
   onSelectClip?: (clipId: string) => void;
   onTrimClip?: (clipId: string, side: 'left' | 'right', deltaSec: number) => void;
@@ -49,6 +53,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   onToggleTrackHidden,
   onToggleTrackLocked,
   onToggleTrackMuted,
+  onTrackVolumeChange,
+  onClipVolumeChange,
   onSeek,
   onSelectClip,
   onTrimClip,
@@ -97,6 +103,19 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       }));
     }
   };
+
+  const changeTrackVolume = (trackId: string, volume: number) => {
+    if (onTrackVolumeChange) {
+      onTrackVolumeChange(trackId, volume);
+    } else {
+      setInternalTrackStates(prev => ({
+        ...prev,
+        [trackId]: { ...prev[trackId], volume },
+      }));
+    }
+  };
+
+  const [volumePopoverTrackId, setVolumePopoverTrackId] = useState<string | null>(null);
 
   const pxPerSec = 22 * scale;
   const totalTimelineWidthPx = Math.max(1400, duration * pxPerSec + 300);
@@ -228,11 +247,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         userSelect: 'none',
         position: 'relative',
       }}
+      onClick={() => setVolumePopoverTrackId(null)}
     >
-      {/* Left Track Control Headers (Page 1) */}
+      {/* Left Track Control Headers (Wider 84px for volume control and labels) */}
       <div
         style={{
-          width: '56px',
+          width: '84px',
           backgroundColor: '#14171C',
           borderRight: '1px solid #2B303A',
           display: 'flex',
@@ -255,14 +275,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             justifyContent: 'center',
             cursor: 'pointer',
             color: '#168BFF',
-            fontSize: '18px',
+            fontSize: '12px',
             fontWeight: 700,
             transition: 'background-color 0.15s, transform 0.1s',
           }}
           title="Add New Video/Audio Track"
           onClick={onAddTrack ?? (() => {})}
         >
-          +
+          + Track
         </button>
 
         {/* Track 1 Header: Titles */}
@@ -272,96 +292,202 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             borderBottom: '1px solid #2B303A',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'space-around',
-            padding: '0 4px',
+            justifyContent: 'space-between',
+            padding: '0 6px',
             color: '#8854D0',
           }}
           title="Titles & Subtitles Track"
         >
-          <IconTitles size={14} color="#8854D0" />
-          <button
-            type="button"
-            title={activeTrackStates['track_title']?.hidden ? 'Show Track' : 'Hide Track'}
-            onClick={() => toggleHidden('track_title')}
-            style={trackBtnStyle}
-          >
-            <IconEye size={13} color={activeTrackStates['track_title']?.hidden ? '#FF4757' : '#A4B0BE'} />
-          </button>
-          <button
-            type="button"
-            title={activeTrackStates['track_title']?.locked ? 'Unlock Track' : 'Lock Track'}
-            onClick={() => toggleLocked('track_title')}
-            style={trackBtnStyle}
-          >
-            <IconLock size={13} color={activeTrackStates['track_title']?.locked ? '#FFD32A' : '#636E7B'} />
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <IconTitles size={13} color="#8854D0" />
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Titles</span>
+          </div>
+          <div style={{ display: 'flex', gap: '2px' }}>
+            <button
+              type="button"
+              title={activeTrackStates['track_title']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_title')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={11} color={activeTrackStates['track_title']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              type="button"
+              title={activeTrackStates['track_title']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_title')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={11} color={activeTrackStates['track_title']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
+          </div>
         </div>
 
-        {/* Track 2 Header: Video & Waveform */}
+        {/* Track 2 Header: Video & Waveform with Volume Slider */}
         <div
           style={{
             height: '76px',
             borderBottom: '1px solid #2B303A',
             display: 'flex',
             flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '8px',
+            justifyContent: 'space-between',
+            padding: '4px 6px',
             color: '#4B6584',
+            position: 'relative',
           }}
           title="Composite Video Track"
         >
-          <span style={{ fontSize: '13px' }}>🎬</span>
-          <div style={{ display: 'flex', gap: '4px' }}>
-            <button
-              type="button"
-              title={activeTrackStates['track_video']?.hidden ? 'Show Track' : 'Hide Track'}
-              onClick={() => toggleHidden('track_video')}
-              style={trackBtnStyle}
-            >
-              <IconEye size={13} color={activeTrackStates['track_video']?.hidden ? '#FF4757' : '#A4B0BE'} />
-            </button>
-            <button
-              type="button"
-              title={activeTrackStates['track_video']?.locked ? 'Unlock Track' : 'Lock Track'}
-              onClick={() => toggleLocked('track_video')}
-              style={trackBtnStyle}
-            >
-              <IconLock size={13} color={activeTrackStates['track_video']?.locked ? '#FFD32A' : '#636E7B'} />
-            </button>
+          {/* Header Row: Label + Action Buttons */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <span style={{ fontSize: '12px' }}>🎬</span>
+              <span style={{ fontSize: '10px', fontWeight: 600, color: '#A4B0BE' }}>Video</span>
+            </div>
+            <div style={{ display: 'flex', gap: '2px' }}>
+              <button
+                type="button"
+                title={activeTrackStates['track_video']?.hidden ? 'Show Track' : 'Hide Track'}
+                onClick={() => toggleHidden('track_video')}
+                style={trackBtnStyle}
+              >
+                <IconEye size={11} color={activeTrackStates['track_video']?.hidden ? '#FF4757' : '#A4B0BE'} />
+              </button>
+              <button
+                type="button"
+                title={activeTrackStates['track_video']?.locked ? 'Unlock Track' : 'Lock Track'}
+                onClick={() => toggleLocked('track_video')}
+                style={trackBtnStyle}
+              >
+                <IconLock size={11} color={activeTrackStates['track_video']?.locked ? '#FFD32A' : '#636E7B'} />
+              </button>
+            </div>
+          </div>
+
+          {/* Volume Control Row */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '9px', color: '#8A96A6' }}>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  setVolumePopoverTrackId(volumePopoverTrackId === 'track_video' ? null : 'track_video');
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '2px',
+                  color: (activeTrackStates['track_video']?.volume ?? 100) === 0 ? '#FF4757' : '#168BFF',
+                }}
+                title="Click for Video Volume Presets"
+              >
+                {(activeTrackStates['track_video']?.volume ?? 100) === 0 ? (
+                  <IconVolumeMute size={11} color="#FF4757" />
+                ) : (
+                  <IconVolume size={11} color="#168BFF" />
+                )}
+                <span>Vol</span>
+              </button>
+              <span style={{ fontWeight: 600, color: '#FFFFFF' }}>
+                {activeTrackStates['track_video']?.volume ?? 100}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={activeTrackStates['track_video']?.volume ?? 100}
+              onChange={e => changeTrackVolume('track_video', Number(e.target.value))}
+              title={`Video Track Volume: ${activeTrackStates['track_video']?.volume ?? 100}%`}
+              style={{
+                width: '100%',
+                height: '4px',
+                accentColor: '#168BFF',
+                cursor: 'pointer',
+                margin: '2px 0',
+              }}
+            />
           </div>
         </div>
 
-        {/* Track 3 Header: Background Music */}
+        {/* Track 3 Header: Background Music with Volume Slider */}
         <div
           style={{
             height: '44px',
             borderBottom: customTrackIds.length > 0 ? '1px solid #2B303A' : 'none',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-around',
-            padding: '0 4px',
+            flexDirection: 'column',
+            justifyContent: 'space-between',
+            padding: '3px 6px',
             color: '#10AC84',
+            position: 'relative',
           }}
           title="Audio & Music Track"
         >
-          <span style={{ fontSize: '13px' }}>🎵</span>
-          <button
-            type="button"
-            title={activeTrackStates['track_audio']?.muted ? 'Unmute Track' : 'Mute Track'}
-            onClick={() => toggleMuted('track_audio')}
-            style={trackBtnStyle}
-          >
-            <IconVolumeMute size={13} color={activeTrackStates['track_audio']?.muted ? '#FF4757' : '#10AC84'} />
-          </button>
-          <button
-            type="button"
-            title={activeTrackStates['track_audio']?.locked ? 'Unlock Track' : 'Lock Track'}
-            onClick={() => toggleLocked('track_audio')}
-            style={trackBtnStyle}
-          >
-            <IconLock size={13} color={activeTrackStates['track_audio']?.locked ? '#FFD32A' : '#636E7B'} />
-          </button>
+          {/* Header Row: Label + Mute & Lock */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <span style={{ fontSize: '11px' }}>🎵</span>
+              <span style={{ fontSize: '10px', fontWeight: 600, color: '#10AC84' }}>Audio</span>
+            </div>
+            <div style={{ display: 'flex', gap: '2px' }}>
+              <button
+                type="button"
+                title={activeTrackStates['track_audio']?.muted ? 'Unmute Track' : 'Mute Track'}
+                onClick={() => toggleMuted('track_audio')}
+                style={trackBtnStyle}
+              >
+                <IconVolumeMute size={11} color={activeTrackStates['track_audio']?.muted ? '#FF4757' : '#10AC84'} />
+              </button>
+              <button
+                type="button"
+                title={activeTrackStates['track_audio']?.locked ? 'Unlock Track' : 'Lock Track'}
+                onClick={() => toggleLocked('track_audio')}
+                style={trackBtnStyle}
+              >
+                <IconLock size={11} color={activeTrackStates['track_audio']?.locked ? '#FFD32A' : '#636E7B'} />
+              </button>
+            </div>
+          </div>
+
+          {/* Volume Control Row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={activeTrackStates['track_audio']?.muted ? 0 : (activeTrackStates['track_audio']?.volume ?? 100)}
+              onChange={e => changeTrackVolume('track_audio', Number(e.target.value))}
+              title={`Audio Track Volume: ${activeTrackStates['track_audio']?.volume ?? 100}%`}
+              style={{
+                flex: 1,
+                height: '4px',
+                accentColor: '#10AC84',
+                cursor: 'pointer',
+              }}
+            />
+            <span
+              onClick={e => {
+                e.stopPropagation();
+                setVolumePopoverTrackId(volumePopoverTrackId === 'track_audio' ? null : 'track_audio');
+              }}
+              style={{
+                fontSize: '9px',
+                fontWeight: 600,
+                color: activeTrackStates['track_audio']?.muted ? '#FF4757' : '#FFFFFF',
+                cursor: 'pointer',
+                minWidth: '24px',
+                textAlign: 'right',
+              }}
+              title="Click for Volume Presets"
+            >
+              {activeTrackStates['track_audio']?.muted ? '0%' : `${activeTrackStates['track_audio']?.volume ?? 100}%`}
+            </span>
+          </div>
         </div>
 
         {/* Dynamic Custom Track Headers */}
@@ -372,33 +498,109 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               height: '40px',
               borderBottom: '1px solid #2B303A',
               display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-around',
-              padding: '0 4px',
+              flexDirection: 'column',
+              justifyContent: 'space-between',
+              padding: '2px 6px',
               color: '#FFA502',
+              position: 'relative',
             }}
             title={`Custom Overlay Track ${idx + 1} (${trackId})`}
           >
-            <span style={{ fontSize: '11px', fontWeight: 600 }}>T{idx + 4}</span>
-            <button
-              type="button"
-              title={activeTrackStates[trackId]?.hidden ? 'Show Track' : 'Hide Track'}
-              onClick={() => toggleHidden(trackId)}
-              style={trackBtnStyle}
-            >
-              <IconEye size={13} color={activeTrackStates[trackId]?.hidden ? '#FF4757' : '#A4B0BE'} />
-            </button>
-            <button
-              type="button"
-              title={activeTrackStates[trackId]?.locked ? 'Unlock Track' : 'Lock Track'}
-              onClick={() => toggleLocked(trackId)}
-              style={trackBtnStyle}
-            >
-              <IconLock size={13} color={activeTrackStates[trackId]?.locked ? '#FFD32A' : '#636E7B'} />
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '10px', fontWeight: 600 }}>T{idx + 4}</span>
+              <div style={{ display: 'flex', gap: '2px' }}>
+                <button
+                  type="button"
+                  title={activeTrackStates[trackId]?.hidden ? 'Show Track' : 'Hide Track'}
+                  onClick={() => toggleHidden(trackId)}
+                  style={trackBtnStyle}
+                >
+                  <IconEye size={11} color={activeTrackStates[trackId]?.hidden ? '#FF4757' : '#A4B0BE'} />
+                </button>
+                <button
+                  type="button"
+                  title={activeTrackStates[trackId]?.locked ? 'Unlock Track' : 'Lock Track'}
+                  onClick={() => toggleLocked(trackId)}
+                  style={trackBtnStyle}
+                >
+                  <IconLock size={11} color={activeTrackStates[trackId]?.locked ? '#FFD32A' : '#636E7B'} />
+                </button>
+              </div>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              value={activeTrackStates[trackId]?.volume ?? 100}
+              onChange={e => changeTrackVolume(trackId, Number(e.target.value))}
+              style={{ width: '100%', height: '3px', accentColor: '#FFA502' }}
+            />
           </div>
         ))}
       </div>
+
+      {/* Floating Volume Presets Popover */}
+      {volumePopoverTrackId && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            left: '88px',
+            top: volumePopoverTrackId === 'track_video' ? '36px' : '112px',
+            backgroundColor: '#1E222B',
+            border: '1px solid #168BFF',
+            borderRadius: '8px',
+            padding: '12px 14px',
+            zIndex: 9999,
+            boxShadow: '0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(22, 139, 255, 0.3)',
+            width: '210px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '11px', fontWeight: 600, color: '#FFFFFF' }}>
+              {volumePopoverTrackId === 'track_video' ? 'Video Audio Gain' : 'Music Track Gain'}
+            </span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#168BFF' }}>
+              {activeTrackStates[volumePopoverTrackId]?.volume ?? 100}%
+            </span>
+          </div>
+
+          <input
+            type="range"
+            min="0"
+            max="200"
+            step="1"
+            value={activeTrackStates[volumePopoverTrackId]?.volume ?? 100}
+            onChange={e => changeTrackVolume(volumePopoverTrackId, Number(e.target.value))}
+            style={{ width: '100%', accentColor: '#168BFF', cursor: 'pointer' }}
+          />
+
+          <div style={{ display: 'flex', gap: '4px', justifyContent: 'space-between' }}>
+            {[0, 50, 100, 150, 200].map(pct => (
+              <button
+                key={pct}
+                type="button"
+                onClick={() => changeTrackVolume(volumePopoverTrackId, pct)}
+                style={{
+                  backgroundColor: (activeTrackStates[volumePopoverTrackId]?.volume ?? 100) === pct ? '#168BFF' : '#2A303C',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '2px 5px',
+                  fontSize: '9px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {pct === 0 ? 'Mute' : `${pct}%`}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Scrollable Tracks Canvas Well */}
       <div
@@ -684,9 +886,34 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                       overflow: 'hidden',
                     }}
                   >
-                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap' }}>
-                      {clip.title}
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {clip.title}
+                      </span>
+                      <span
+                        onClick={e => {
+                          e.stopPropagation();
+                          const newVol = prompt(`Set clip volume % (0 - 200):`, String(clip.volume ?? 100));
+                          if (newVol !== null && !isNaN(Number(newVol))) {
+                            onClipVolumeChange?.(clip.id, Math.max(0, Math.min(200, Number(newVol))));
+                          }
+                        }}
+                        style={{
+                          fontSize: '9px',
+                          backgroundColor: 'rgba(0, 0, 0, 0.45)',
+                          color: '#A4B0BE',
+                          padding: '1px 5px',
+                          borderRadius: '3px',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          marginLeft: '6px',
+                        }}
+                        title="Click to set clip volume %"
+                      >
+                        {clip.volume !== undefined ? `${clip.volume}%` : '100%'}
+                      </span>
+                    </div>
                   </div>
 
                   {/* Lavender-Blue Waveform Strip Below (Page 1) */}
@@ -792,9 +1019,34 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'all 0.12s ease',
                   }}
                 >
-                  <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                    {clip.title}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
+                    <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                      {clip.title}
+                    </span>
+                    <span
+                      onClick={e => {
+                        e.stopPropagation();
+                        const newVol = prompt(`Set clip volume % (0 - 200):`, String(clip.volume ?? 100));
+                        if (newVol !== null && !isNaN(Number(newVol))) {
+                          onClipVolumeChange?.(clip.id, Math.max(0, Math.min(200, Number(newVol))));
+                        }
+                      }}
+                      style={{
+                        fontSize: '9px',
+                        backgroundColor: 'rgba(0, 0, 0, 0.45)',
+                        color: '#E0FFF5',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        flexShrink: 0,
+                        marginLeft: '6px',
+                      }}
+                      title="Click to set clip volume %"
+                    >
+                      {clip.volume !== undefined ? `${clip.volume}%` : '100%'}
+                    </span>
+                  </div>
 
                   {/* Mint-Green Acoustic Waveform */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>

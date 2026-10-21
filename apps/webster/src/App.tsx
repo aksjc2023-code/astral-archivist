@@ -6,12 +6,15 @@ import {
   TimelineClip,
   MarkerFlag,
   ToolSettings,
+  ToolDrawerTab,
   TelemetryState,
   ActivityDockTab,
   SubNavSection,
   FailureMode,
   INITIAL_MEDIA_ASSETS,
   INITIAL_WORD_TOKENS,
+  INITIAL_TOKENS_BY_MEDIA,
+  generateDefaultTokensForAsset,
   INITIAL_TIMELINE_CLIPS,
   INITIAL_MARKERS,
   INITIAL_TOOL_SETTINGS,
@@ -69,7 +72,8 @@ export const App: React.FC = () => {
 
   // Media Bin & Transcript State
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(INITIAL_MEDIA_ASSETS);
-  const [tokens, setTokens] = useState<WordToken[]>(INITIAL_WORD_TOKENS);
+  const [tokensByMedia, setTokensByMedia] = useState<Record<string, WordToken[]>>(INITIAL_TOKENS_BY_MEDIA);
+  const [activeTranscriptMediaId, setActiveTranscriptMediaId] = useState<string>('asset_1');
   const [clips, setClips] = useState<TimelineClip[]>(INITIAL_TIMELINE_CLIPS);
   const [markers, setMarkers] = useState<MarkerFlag[]>(INITIAL_MARKERS);
 
@@ -80,16 +84,23 @@ export const App: React.FC = () => {
   const [timelineScale, setTimelineScale] = useState(1.0);
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
   const [selectedClipId, setSelectedClipId] = useState<string | undefined>('clip_video_1');
-  const [trackStates, setTrackStates] = useState<Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean }>>({});
+  const [trackStates, setTrackStates] = useState<Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean; volume?: number }>>({
+    track_title: { hidden: false, locked: false, muted: false, volume: 100 },
+    track_video: { hidden: false, locked: false, muted: false, volume: 100 },
+    track_audio: { hidden: false, locked: false, muted: false, volume: 100 },
+  });
 
   // Tool Drawer & Visual Filter State
   const [toolSettings, setToolSettings] = useState<ToolSettings>(INITIAL_TOOL_SETTINGS);
+  const [activeToolTab, setActiveToolTab] = useState<ToolDrawerTab>('chroma');
   const [activeFilter, setActiveFilter] = useState<string>('none');
   const [rotationAngle, setRotationAngle] = useState(0);
+  const [isSubtitlesActive, setIsSubtitlesActive] = useState(true);
+  const [masterVolume, setMasterVolume] = useState(100);
 
   // Undo / Redo History Stacks
-  const [historyStack, setHistoryStack] = useState<{ tokens: WordToken[]; clips: TimelineClip[] }[]>([]);
-  const [redoStack, setRedoStack] = useState<{ tokens: WordToken[]; clips: TimelineClip[] }[]>([]);
+  const [historyStack, setHistoryStack] = useState<{ tokensByMedia: Record<string, WordToken[]>; clips: TimelineClip[] }[]>([]);
+  const [redoStack, setRedoStack] = useState<{ tokensByMedia: Record<string, WordToken[]>; clips: TimelineClip[] }[]>([]);
 
   // Modals & Overlays
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -153,10 +164,23 @@ export const App: React.FC = () => {
 
   const activeMediaId = activeClip?.mediaId ?? 'asset_1';
 
+  // Automatically keep active transcript in sync with active video clip under playhead
+  useEffect(() => {
+    if (activeClip?.mediaId) {
+      setActiveTranscriptMediaId(activeClip.mediaId);
+    }
+  }, [activeClip?.mediaId]);
+
+  // Active word tokens for the currently focused transcript asset
+  const tokens = useMemo(() => {
+    return tokensByMedia[activeTranscriptMediaId] ?? [];
+  }, [tokensByMedia, activeTranscriptMediaId]);
+
   // Calculate real-time PlaybackSegments scoped strictly to active clip's media asset
   const rebuildResult = useMemo(() => {
-    return buildPlaybackSegments(tokens, activeMediaId);
-  }, [tokens, activeMediaId]);
+    const activeClipTokens = tokensByMedia[activeMediaId] ?? [];
+    return buildPlaybackSegments(activeClipTokens, activeMediaId);
+  }, [tokensByMedia, activeMediaId]);
 
   // Asset-scoped playback segments map to prevent cross-asset cut leakage
   const segmentsByMediaId = useMemo(() => {
@@ -164,10 +188,11 @@ export const App: React.FC = () => {
     const mediaIds = new Set(clips.map(c => c.mediaId).filter(Boolean) as string[]);
     mediaIds.add('asset_1');
     mediaIds.forEach(id => {
-      map.set(id, buildPlaybackSegments(tokens, id).segments);
+      const assetTokens = tokensByMedia[id] ?? [];
+      map.set(id, buildPlaybackSegments(assetTokens, id).segments);
     });
     return map;
-  }, [tokens, clips]);
+  }, [tokensByMedia, clips]);
 
   // Composition project duration derived cleanly from maximum clip boundary
   const projectDuration = useMemo(() => {
@@ -182,6 +207,11 @@ export const App: React.FC = () => {
 
   const activeVideoUrl = activeClip?.videoUrl ?? 'https://www.w3schools.com/html/mov_bbb.mp4';
 
+  // Synchronized background audio track clip (Track 3)
+  const backgroundAudioClip = useMemo(() => {
+    return clips.find(c => c.trackId === 'track_audio');
+  }, [clips]);
+
   // Update telemetry metrics whenever segments rebuild
   useEffect(() => {
     setTelemetry(prev => ({
@@ -191,9 +221,9 @@ export const App: React.FC = () => {
     }));
   }, [rebuildResult]);
 
-  // Push history helper for Undo/Redo across both transcript & timeline clips
-  const pushHistory = useCallback((currentTokens: WordToken[], currentClips: TimelineClip[]) => {
-    setHistoryStack(prev => [...prev.slice(-25), { tokens: currentTokens, clips: currentClips }]);
+  // Push history helper for Undo/Redo across both multi-asset transcripts & timeline clips
+  const pushHistory = useCallback((currentTokensByMedia: Record<string, WordToken[]>, currentClips: TimelineClip[]) => {
+    setHistoryStack(prev => [...prev.slice(-25), { tokensByMedia: currentTokensByMedia, clips: currentClips }]);
     setRedoStack([]);
   }, []);
 
@@ -201,77 +231,118 @@ export const App: React.FC = () => {
     if (historyStack.length === 0) return;
     const previous = historyStack[historyStack.length - 1];
     if (previous) {
-      setRedoStack(r => [...r, { tokens, clips }]);
-      setTokens(previous.tokens);
+      setRedoStack(r => [...r, { tokensByMedia, clips }]);
+      setTokensByMedia(previous.tokensByMedia);
       setClips(previous.clips);
       setHistoryStack(h => h.slice(0, -1));
     }
-  }, [historyStack, tokens, clips]);
+  }, [historyStack, tokensByMedia, clips]);
 
   const handleRedo = useCallback(() => {
     if (redoStack.length === 0) return;
     const next = redoStack[redoStack.length - 1];
     if (next) {
-      setHistoryStack(h => [...h, { tokens, clips }]);
-      setTokens(next.tokens);
+      setHistoryStack(h => [...h, { tokensByMedia, clips }]);
+      setTokensByMedia(next.tokensByMedia);
       setClips(next.clips);
       setRedoStack(r => r.slice(0, -1));
     }
-  }, [redoStack, tokens, clips]);
+  }, [redoStack, tokensByMedia, clips]);
 
   // Word Token Cut / Toggle Action (Ripple Editing)
   const handleToggleDeleteToken = useCallback((tokenId: string) => {
-    pushHistory(tokens, clips);
-    setTokens(prev =>
-      prev.map(t => {
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      const updated = currentList.map(t => {
         if (t.id !== tokenId) return t;
-        const updated = { ...t, deleted: !t.deleted };
-        validateWordToken(updated);
-        return updated;
-      })
-    );
-  }, [pushHistory, tokens, clips]);
+        const u = { ...t, deleted: !t.deleted };
+        validateWordToken(u);
+        return u;
+      });
+      return { ...prev, [activeTranscriptMediaId]: updated };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
   // Word Token Multiple Cut Action (Backspace / Range selection)
   const handleToggleDeleteMultipleTokens = useCallback((tokenIds: string[]) => {
     if (tokenIds.length === 0) return;
     const idSet = new Set(tokenIds);
-    pushHistory(tokens, clips);
-    setTokens(prev =>
-      prev.map(t => {
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      const updated = currentList.map(t => {
         if (!idSet.has(t.id)) return t;
-        const updated = { ...t, deleted: true };
-        validateWordToken(updated);
-        return updated;
-      })
-    );
-  }, [pushHistory, tokens, clips]);
+        const u = { ...t, deleted: true };
+        validateWordToken(u);
+        return u;
+      });
+      return { ...prev, [activeTranscriptMediaId]: updated };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
   // 1-Click Purge Fillers & Pauses (>0.5s)
   const handlePurgeFillers = useCallback(() => {
-    pushHistory(tokens, clips);
-    const result = purgeFillersAndPauses(tokens);
-    setTokens(result.updatedTokens);
-  }, [pushHistory, tokens, clips]);
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      const result = purgeFillersAndPauses(currentList);
+      return { ...prev, [activeTranscriptMediaId]: result.updatedTokens };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
   // Restore all cut tokens
   const handleRestoreAll = useCallback(() => {
-    pushHistory(tokens, clips);
-    setTokens(restoreAllTokens(tokens));
-  }, [pushHistory, tokens, clips]);
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      return { ...prev, [activeTranscriptMediaId]: restoreAllTokens(currentList) };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
   // Inline TTS Word Replacement (Softablitz A2)
   const handleEditTokenText = useCallback((tokenId: string, newText: string) => {
-    pushHistory(tokens, clips);
-    setTokens(prev =>
-      prev.map(t => {
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      const updated = currentList.map(t => {
         if (t.id !== tokenId) return t;
-        const updated = { ...t, text: newText, isEdited: true };
-        validateWordToken(updated);
-        return updated;
-      })
-    );
-  }, [pushHistory, tokens, clips]);
+        const u = { ...t, text: newText, isEdited: true };
+        validateWordToken(u);
+        return u;
+      });
+      return { ...prev, [activeTranscriptMediaId]: updated };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
+
+  // Fast Instant Mock Transcript Generator
+  const handleFastGenerateTranscript = useCallback((mediaId: string) => {
+    const asset = mediaAssets.find(a => a.id === mediaId);
+    const dur = asset?.duration ?? 15.0;
+    const name = asset?.name ?? 'Media File';
+    const newTokens = generateDefaultTokensForAsset(mediaId, name, dur);
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => ({
+      ...prev,
+      [mediaId]: newTokens,
+    }));
+  }, [mediaAssets, pushHistory, tokensByMedia, clips]);
+
+  // Track & Clip Volume Control Handlers
+  const handleTrackVolumeChange = useCallback((trackId: string, volume: number) => {
+    setTrackStates(prev => ({
+      ...prev,
+      [trackId]: {
+        ...prev[trackId],
+        volume,
+      },
+    }));
+  }, []);
+
+  const handleClipVolumeChange = useCallback((clipId: string, volume: number) => {
+    pushHistory(tokensByMedia, clips);
+    setClips(prev => prev.map(c => (c.id === clipId ? { ...c, volume } : c)));
+  }, [pushHistory, tokensByMedia, clips]);
 
   // Split clip scissors tool (Scissors Icon / Ctrl+B)
   const handleSplitClip = useCallback(() => {
@@ -292,7 +363,7 @@ export const App: React.FC = () => {
       return;
     }
 
-    pushHistory(tokens, clips);
+    pushHistory(tokensByMedia, clips);
 
     const clipStart = targetClip.timelineStart ?? targetClip.sourceStart ?? asTimelineSeconds(0);
     const clipDur = targetClip.timelineDuration ?? targetClip.duration ?? asSeconds(0);
@@ -345,7 +416,7 @@ export const App: React.FC = () => {
     });
 
     setSelectedClipId(clipB.id);
-  }, [clips, currentTime, pushHistory, tokens, trackStates]);
+  }, [clips, currentTime, pushHistory, tokensByMedia, trackStates]);
 
   // Trim clip edges (interactive yellow handles) with track-lock check and collision awareness
   const handleTrimClip = useCallback((clipId: string, side: 'left' | 'right', deltaSec: number) => {
@@ -353,7 +424,7 @@ export const App: React.FC = () => {
     if (!target) return;
     if (trackStates[target.trackId]?.locked) return;
 
-    pushHistory(tokens, clips);
+    pushHistory(tokensByMedia, clips);
     setClips(prev => prev.map(c => {
       if (c.id !== clipId) return c;
       const curStart = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
@@ -419,7 +490,7 @@ export const App: React.FC = () => {
         return updated;
       }
     }));
-  }, [clips, pushHistory, tokens, trackStates]);
+  }, [clips, pushHistory, tokensByMedia, trackStates]);
 
   // Shift / Move clip horizontally along timeline with track-lock check and collision awareness
   const handleMoveClip = useCallback((clipId: string, newStartSec: number) => {
@@ -491,10 +562,10 @@ export const App: React.FC = () => {
 
   const handleClipMoveEnd = useCallback((_clipId: string) => {
     if (dragStartClipsRef.current) {
-      pushHistory(tokens, dragStartClipsRef.current);
+      pushHistory(tokensByMedia, dragStartClipsRef.current);
       dragStartClipsRef.current = null;
     }
-  }, [pushHistory, tokens]);
+  }, [pushHistory, tokensByMedia]);
 
   // Track Header Actions (Hide, Lock, Mute)
   const handleToggleTrackHidden = useCallback((trackId: string) => {
@@ -557,7 +628,7 @@ export const App: React.FC = () => {
           alert('Cannot delete clips on a locked track. Please unlock the track first.');
           return;
         }
-        pushHistory(tokens, clips);
+        pushHistory(tokensByMedia, clips);
         const remainingClips = clips.filter(c => c.id !== selectedClipId);
         // Cleanly revoke blob URL ONLY when no other clip AND no media asset references it
         if (clipToDelete.videoUrl) {
@@ -573,11 +644,11 @@ export const App: React.FC = () => {
     if (currentToken) {
       handleToggleDeleteToken(currentToken.id);
     }
-  }, [selectedClipId, clips, tokens, currentTime, handleToggleDeleteToken, pushHistory, trackStates, safelyRevokeBlobUrl, mediaAssets]);
+  }, [selectedClipId, clips, tokens, currentTime, handleToggleDeleteToken, pushHistory, tokensByMedia, trackStates, safelyRevokeBlobUrl, mediaAssets]);
 
   // Add Asset from Media Bin to Timeline
   const handleAddToTimeline = useCallback((asset: MediaAsset) => {
-    pushHistory(tokens, clips);
+    pushHistory(tokensByMedia, clips);
 
     const videoClips = clips.filter(c => c.trackId === 'track_video');
     const lastEnd = videoClips.reduce((max, c) => {
@@ -610,7 +681,7 @@ export const App: React.FC = () => {
     setSelectedClipId(newClip.id);
     setMediaAssets(prev => prev.map(a => a.id === asset.id ? { ...a, isUsedOnTimeline: true } : a));
     setCurrentTime(newClip.timelineStart);
-  }, [clips, pushHistory, tokens]);
+  }, [clips, pushHistory, tokensByMedia]);
 
   // Transcribe any media File/Blob with WebGPU Whisper
   const handleTranscribeMedia = useCallback(async (blob: Blob, asset: MediaAsset) => {
@@ -628,8 +699,12 @@ export const App: React.FC = () => {
       });
 
       if (result.tokens.length > 0) {
-        pushHistory(tokens, clips);
-        setTokens(result.tokens);
+        pushHistory(tokensByMedia, clips);
+        setTokensByMedia(prev => ({
+          ...prev,
+          [asset.id]: result.tokens,
+        }));
+        setActiveTranscriptMediaId(asset.id);
 
         // Derive audio duration from last token end
         const calculatedDur = Math.max(...result.tokens.map(t => t.end), 5.0);
@@ -665,7 +740,7 @@ export const App: React.FC = () => {
       setTranscribePercent(0);
       setTranscribeStatus('');
     }
-  }, [clips, pushHistory, tokens]);
+  }, [clips, pushHistory, tokensByMedia]);
 
   // Real File Drag-and-Drop or Picker handling with tracked blob URLs
   const handleFilesAdded = useCallback((fileList: File[]) => {
@@ -698,10 +773,20 @@ export const App: React.FC = () => {
 
     setMediaAssets(prev => [...newAssets, ...prev]);
 
+    // Automatically create instant default transcript for newly uploaded assets
+    setTokensByMedia(prev => {
+      const updated = { ...prev };
+      newAssets.forEach(a => {
+        updated[a.id] = generateDefaultTokensForAsset(a.id, a.name, a.duration);
+      });
+      return updated;
+    });
+
     // Automatically prompt and transcribe the first imported audio/video file
     const primaryFile = fileList[0];
     const primaryAsset = newAssets[0];
     if (primaryFile && primaryAsset && (primaryAsset.type === 'video' || primaryAsset.type === 'audio')) {
+      setActiveTranscriptMediaId(primaryAsset.id);
       handleAddToTimeline(primaryAsset);
       handleTranscribeMedia(primaryFile, primaryAsset);
     } else {
@@ -807,7 +892,7 @@ export const App: React.FC = () => {
     if (activeDockTab === 'filters') {
       setActiveFilter(effectName);
     } else if (activeDockTab === 'titles') {
-      pushHistory(tokens, clips);
+      pushHistory(tokensByMedia, clips);
       const newTitleClip: TimelineClip = {
         id: `title_${Date.now()}`,
         trackId: 'track_title',
@@ -826,7 +911,7 @@ export const App: React.FC = () => {
     } else {
       alert(`Applied effect: ${effectName}!`);
     }
-  }, [activeDockTab, currentTime, pushHistory, tokens, clips]);
+  }, [activeDockTab, currentTime, pushHistory, tokensByMedia, clips]);
 
   // Fault Simulator Trigger with safe timeout retention
   const handleTriggerFailureMode = useCallback((mode: FailureMode) => {
@@ -1029,6 +1114,9 @@ export const App: React.FC = () => {
             <TranscriptEditorView
               tokens={tokens}
               currentTime={currentTime}
+              mediaAssets={mediaAssets}
+              activeMediaId={activeTranscriptMediaId}
+              onSelectMediaId={setActiveTranscriptMediaId}
               onToggleDeleteToken={handleToggleDeleteToken}
               onToggleDeleteMultipleTokens={handleToggleDeleteMultipleTokens}
               onPurgeFillers={handlePurgeFillers}
@@ -1036,6 +1124,7 @@ export const App: React.FC = () => {
               onEditTokenText={handleEditTokenText}
               onSeekToTime={handleSeek}
               onTranscribeCurrentMedia={handleTranscribeCurrentMedia}
+              onFastGenerateTranscript={handleFastGenerateTranscript}
               isTranscribing={isTranscribing}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
@@ -1051,6 +1140,10 @@ export const App: React.FC = () => {
             <ToolsDrawerView
               settings={toolSettings}
               onUpdateSettings={setToolSettings}
+              activeSubTab={activeToolTab}
+              onTabChange={setActiveToolTab}
+              masterVolume={masterVolume}
+              onMasterVolumeChange={setMasterVolume}
             />
           ) : ['filters', 'transitions', 'titles', 'stickers'].includes(activeDockTab) ? (
             /* View E: Effects Grid (Page 4 & 7) */
@@ -1099,6 +1192,9 @@ export const App: React.FC = () => {
             onLastFrame={() => handleSeek(projectDuration)}
             onPrevFrame={() => handleSeek(Math.max(0, currentTime - 0.04))}
             onNextFrame={() => handleSeek(Math.min(projectDuration, currentTime + 0.04))}
+            trackStates={trackStates}
+            isSubtitlesActive={isSubtitlesActive}
+            backgroundAudioUrl={backgroundAudioClip?.videoUrl ?? 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3'}
           />
         </div>
       </div>
@@ -1113,15 +1209,20 @@ export const App: React.FC = () => {
         onDeleteSelected={handleDeleteSelected}
         onSplitClip={handleSplitClip}
         onRotateClip={() => setRotationAngle(r => (r + 90) % 360)}
+        onCropZoom={() => {
+          setActiveDockTab('tools');
+          setActiveToolTab('overlay');
+        }}
         onOpenColorTool={() => {
           setActiveDockTab('tools');
+          setActiveToolTab('color');
         }}
         onOpenEqualizerTool={() => {
           setActiveDockTab('tools');
+          setActiveToolTab('equalizer');
         }}
-        onToggleSubtitles={() => {
-          alert('Burned-in ASS subtitles active.');
-        }}
+        onToggleSubtitles={() => setIsSubtitlesActive(s => !s)}
+        isSubtitlesActive={isSubtitlesActive}
         onAddMarker={handleAddMarker}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onToggleFaultSimulator={() => setIsFaultSimulatorOpen(!isFaultSimulatorOpen)}
@@ -1141,8 +1242,16 @@ export const App: React.FC = () => {
           onToggleTrackHidden={handleToggleTrackHidden}
           onToggleTrackLocked={handleToggleTrackLocked}
           onToggleTrackMuted={handleToggleTrackMuted}
+          onTrackVolumeChange={handleTrackVolumeChange}
+          onClipVolumeChange={handleClipVolumeChange}
           onSeek={handleSeek}
-          onSelectClip={setSelectedClipId}
+          onSelectClip={clipId => {
+            setSelectedClipId(clipId);
+            const target = clips.find(c => c.id === clipId);
+            if (target?.mediaId) {
+              setActiveTranscriptMediaId(target.mediaId);
+            }
+          }}
           onTrimClip={handleTrimClip}
           onMoveClip={handleMoveClip}
           onClipMoveEnd={handleClipMoveEnd}

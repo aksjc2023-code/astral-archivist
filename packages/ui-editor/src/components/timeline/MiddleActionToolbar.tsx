@@ -24,9 +24,11 @@ export interface MiddleActionToolbarProps {
   onDeleteSelected: () => void;
   onSplitClip: () => void;
   onRotateClip: () => void;
+  onCropZoom?: () => void;
   onOpenColorTool: () => void;
   onOpenEqualizerTool: () => void;
   onToggleSubtitles: () => void;
+  isSubtitlesActive?: boolean;
   onAddMarker: () => void;
   onOpenExportModal: () => void;
   onToggleFaultSimulator: () => void;
@@ -41,9 +43,11 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
   onDeleteSelected,
   onSplitClip,
   onRotateClip,
+  onCropZoom,
   onOpenColorTool,
   onOpenEqualizerTool,
   onToggleSubtitles,
+  isSubtitlesActive = true,
   onAddMarker,
   onOpenExportModal,
   onToggleFaultSimulator,
@@ -117,11 +121,11 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
 
         <button
           type="button"
-          title="Crop & Zoom"
-          onClick={onRotateClip}
+          title="Crop & Zoom Guides"
+          onClick={onCropZoom ?? onRotateClip}
           style={btnStyle(true)}
         >
-          <IconCrop size={18} />
+          <IconCrop size={18} color="#A4B0BE" />
         </button>
 
         <button
@@ -135,7 +139,7 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
 
         <button
           type="button"
-          title="Audio Equalizer & Ducking"
+          title="Audio Equalizer & Gain Control"
           onClick={onOpenEqualizerTool}
           style={btnStyle(true)}
         >
@@ -144,11 +148,15 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
 
         <button
           type="button"
-          title="Burned-In Subtitles Preview"
+          title={isSubtitlesActive ? 'Subtitles Preview: Visible' : 'Subtitles Preview: Hidden'}
           onClick={onToggleSubtitles}
-          style={btnStyle(true)}
+          style={{
+            ...btnStyle(true),
+            backgroundColor: isSubtitlesActive ? 'rgba(22, 139, 255, 0.2)' : 'transparent',
+            border: isSubtitlesActive ? '1px solid rgba(22, 139, 255, 0.5)' : 'none',
+          }}
         >
-          <IconSubtitles size={18} />
+          <IconSubtitles size={18} color={isSubtitlesActive ? '#168BFF' : '#636E7B'} />
         </button>
 
         <button

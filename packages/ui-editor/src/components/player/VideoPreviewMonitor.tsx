@@ -37,6 +37,9 @@ export interface VideoPreviewMonitorProps {
   activeFilter?: string;
   colorAdjustments?: ToolSettings['colorAdjustments'];
   onClearActiveFilter?: () => void;
+  trackStates?: Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean; volume?: number }>;
+  isSubtitlesActive?: boolean;
+  backgroundAudioUrl?: string;
 }
 
 export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
@@ -62,6 +65,9 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   activeFilter = 'none',
   colorAdjustments,
   onClearActiveFilter,
+  trackStates,
+  isSubtitlesActive = true,
+  backgroundAudioUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
 }) => {
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
@@ -71,6 +77,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const scrubberTrackRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const stageContainerRef = useRef<HTMLDivElement>(null);
 
   // Robust ref-backed seek coordinator with generation and target verification
@@ -241,13 +248,47 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     v.playbackRate = playbackSpeed;
   }, [playbackSpeed]);
 
-  // Sync volume and mute
+  // Sync volume and mute across video and audio tracks
   useEffect(() => {
     const v = videoRef.current;
-    if (!v) return;
-    v.volume = volume;
-    v.muted = isMuted;
-  }, [volume, isMuted]);
+    if (v) {
+      const isTrackMuted = trackStates?.['track_video']?.muted;
+      const trackVol = (trackStates?.['track_video']?.volume ?? 100) / 100;
+      const effectiveVol = (isMuted || isTrackMuted) ? 0 : Math.max(0, Math.min(1.0, volume * trackVol));
+      v.volume = effectiveVol;
+      v.muted = isMuted || !!isTrackMuted;
+    }
+
+    const a = audioRef.current;
+    if (a) {
+      const isTrackMuted = trackStates?.['track_audio']?.muted;
+      const trackVol = (trackStates?.['track_audio']?.volume ?? 100) / 100;
+      const effectiveVol = (isMuted || isTrackMuted) ? 0 : Math.max(0, Math.min(1.0, volume * trackVol));
+      a.volume = effectiveVol;
+      a.muted = isMuted || !!isTrackMuted;
+    }
+  }, [volume, isMuted, trackStates]);
+
+  // Sync background audio playback & seek
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (isPlaying) {
+      a.play().catch(() => {});
+    } else {
+      a.pause();
+    }
+  }, [isPlaying]);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (Math.abs(a.currentTime - currentTime) > 0.35) {
+      try {
+        a.currentTime = currentTime % (a.duration || 60);
+      } catch {}
+    }
+  }, [currentTime]);
 
   // Sync mapped source time to HTML5 video element with seek serialization and boundary clamping
   useEffect(() => {
@@ -368,6 +409,14 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             }}
           />
 
+          {/* Synchronized Background Music Audio Element for Track 3 */}
+          <audio
+            ref={audioRef}
+            src={backgroundAudioUrl}
+            loop
+            preload="auto"
+          />
+
           {/* Subtle Vignette Gradient */}
           <div
             style={{
@@ -453,53 +502,55 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           )}
 
           {/* Dynamic Burned-In Subtitles (Webster Victory Tier) */}
-          <div
-            style={{
-              position: 'absolute',
-              bottom: '24px',
-              left: '20px',
-              right: '20px',
-              textAlign: 'center',
-              pointerEvents: 'none',
-              zIndex: 15,
-            }}
-          >
+          {isSubtitlesActive !== false && (
             <div
               style={{
-                display: 'inline-block',
-                backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                backdropFilter: 'blur(6px)',
-                borderRadius: '8px',
-                padding: '6px 14px',
-                boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                position: 'absolute',
+                bottom: '24px',
+                left: '20px',
+                right: '20px',
+                textAlign: 'center',
+                pointerEvents: 'none',
+                zIndex: 15,
               }}
             >
-              {currentSentenceTokens.length > 0 ? (
-                currentSentenceTokens.map(tok => {
-                  const isActive = activeToken?.id === tok.id;
-                  return (
-                    <span
-                      key={tok.id}
-                      style={{
-                        margin: '0 3px',
-                        fontSize: '14px',
-                        fontWeight: isActive ? 700 : 500,
-                        color: isActive ? '#168BFF' : '#FFFFFF',
-                        textShadow: isActive ? '0 0 10px rgba(22, 139, 255, 0.8)' : 'none',
-                        transition: 'all 0.1s ease',
-                      }}
-                    >
-                      {tok.text}
-                    </span>
-                  );
-                })
-              ) : (
-                <span style={{ fontSize: '13px', color: '#A4B0BE', fontStyle: 'italic' }}>
-                  ScarletCut Live Video Monitor
-                </span>
-              )}
+              <div
+                style={{
+                  display: 'inline-block',
+                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                  backdropFilter: 'blur(6px)',
+                  borderRadius: '8px',
+                  padding: '6px 14px',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                }}
+              >
+                {currentSentenceTokens.length > 0 ? (
+                  currentSentenceTokens.map(tok => {
+                    const isActive = activeToken?.id === tok.id;
+                    return (
+                      <span
+                        key={tok.id}
+                        style={{
+                          margin: '0 3px',
+                          fontSize: '14px',
+                          fontWeight: isActive ? 700 : 500,
+                          color: isActive ? '#168BFF' : '#FFFFFF',
+                          textShadow: isActive ? '0 0 10px rgba(22, 139, 255, 0.8)' : 'none',
+                          transition: 'all 0.1s ease',
+                        }}
+                      >
+                        {tok.text}
+                      </span>
+                    );
+                  })
+                ) : (
+                  <span style={{ fontSize: '13px', color: '#A4B0BE', fontStyle: 'italic' }}>
+                    ScarletCut Live Video Monitor
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
 
@@ -765,15 +816,35 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             )}
           </div>
 
-          {/* Volume */}
-          <button
-            type="button"
-            title={isMuted ? 'Unmute' : 'Mute'}
-            onClick={() => setIsMuted(!isMuted)}
-            style={transportBtnStyle}
-          >
-            {isMuted ? <IconVolumeMute size={16} color="#FF4757" /> : <IconVolume size={16} />}
-          </button>
+          {/* Volume Control with Slider */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <button
+              type="button"
+              title={isMuted ? 'Unmute Master' : 'Mute Master'}
+              onClick={() => setIsMuted(!isMuted)}
+              style={transportBtnStyle}
+            >
+              {isMuted ? <IconVolumeMute size={16} color="#FF4757" /> : <IconVolume size={16} />}
+            </button>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={isMuted ? 0 : volume}
+              onChange={e => {
+                setVolume(Number(e.target.value));
+                if (isMuted) setIsMuted(false);
+              }}
+              title={`Master Volume: ${Math.round(volume * 100)}%`}
+              style={{
+                width: '54px',
+                height: '4px',
+                accentColor: '#168BFF',
+                cursor: 'pointer',
+              }}
+            />
+          </div>
 
           {/* Crop Toggle */}
           <button

@@ -5,13 +5,29 @@ import { ScarletButton } from '../common/ScarletButton';
 export interface ToolsDrawerViewProps {
   settings: ToolSettings;
   onUpdateSettings: (updater: (prev: ToolSettings) => ToolSettings) => void;
+  activeSubTab?: ToolDrawerTab;
+  onTabChange?: (tab: ToolDrawerTab) => void;
+  masterVolume?: number;
+  onMasterVolumeChange?: (volume: number) => void;
 }
 
 export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
   settings,
   onUpdateSettings,
+  activeSubTab,
+  onTabChange,
+  masterVolume = 100,
+  onMasterVolumeChange,
 }) => {
-  const [activeTab, setActiveTab] = useState<ToolDrawerTab>('chroma');
+  const [internalTab, setInternalTab] = useState<ToolDrawerTab>('chroma');
+  const activeTab = activeSubTab ?? internalTab;
+  const handleTabClick = (tab: ToolDrawerTab) => {
+    if (onTabChange) {
+      onTabChange(tab);
+    } else {
+      setInternalTab(tab);
+    }
+  };
 
   const tabs: Array<{ id: ToolDrawerTab; label: string }> = [
     { id: 'chroma', label: 'Chroma Key' },
@@ -50,7 +66,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
             <button
               key={tab.id}
               type="button"
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabClick(tab.id)}
               style={{
                 backgroundColor: isActive ? '#168BFF' : '#22262E',
                 color: isActive ? '#FFFFFF' : '#A4B0BE',
@@ -305,11 +321,63 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <h3 style={{ fontSize: '14px', fontWeight: 500, color: '#FFFFFF', margin: 0 }}>
-              10-Band Graphic Equalizer
+              Audio Controls &amp; 10-Band Equalizer
             </h3>
             <span style={{ fontSize: '11px', color: '#168BFF' }}>
               Preset: {settings.equalizer.preset}
             </span>
+          </div>
+
+          {/* Master Timeline & Track Gain Control */}
+          <div
+            style={{
+              backgroundColor: '#22262E',
+              border: '1px solid #2B303A',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: '#FFFFFF' }}>
+                Master Playback Volume &amp; Gain
+              </span>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#10AC84' }}>
+                {masterVolume}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="200"
+              step="1"
+              value={masterVolume}
+              onChange={e => onMasterVolumeChange?.(Number(e.target.value))}
+              style={{ width: '100%', accentColor: '#10AC84', cursor: 'pointer' }}
+            />
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {[0, 50, 100, 150, 200].map(val => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => onMasterVolumeChange?.(val)}
+                  style={{
+                    backgroundColor: masterVolume === val ? '#10AC84' : '#2B303A',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {val === 0 ? 'Mute' : `${val}%`}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Softablitz Vocal Purifier Badge Toggle */}

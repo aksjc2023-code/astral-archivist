@@ -76,6 +76,7 @@ export interface TimelineClip {
   hasWaveform?: boolean;
   transitionIn?: string;
   transitionOut?: string;
+  volume?: number; // Volume percentage (0 - 200, default 100)
 
   /** @deprecated Compatibility alias for timelineStart */
   sourceStart?: TimelineSeconds;
