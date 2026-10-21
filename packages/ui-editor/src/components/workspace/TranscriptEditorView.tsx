@@ -195,6 +195,8 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
             {mediaAssets && mediaAssets.length > 0 && (
               <div style={{ position: 'relative' }}>
                 <button
+                  id="btn-transcript-asset-dropdown"
+                  data-testid="btn-transcript-asset-dropdown"
                   type="button"
                   onClick={e => {
                     e.stopPropagation();
@@ -247,6 +249,8 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                       .map(asset => (
                         <div
                           key={asset.id}
+                          id={`opt-transcript-asset-${asset.id}`}
+                          data-testid={`opt-transcript-asset-${asset.id}`}
                           onClick={() => {
                             onSelectMediaId?.(asset.id);
                             setShowMediaDropdown(false);
@@ -281,6 +285,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
           {onFastGenerateTranscript && (
             <ScarletButton
+              id="btn-fast-generate-tokens"
               variant="secondary"
               size="sm"
               icon={<IconLightning size={13} color="#FFA502" />}
@@ -293,6 +298,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
 
           {onTranscribeCurrentMedia && (
             <ScarletButton
+              id="btn-run-webgpu-whisper"
               variant="secondary"
               size="sm"
               icon={<IconSparkles size={13} color="#2ED573" />}
@@ -305,6 +311,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
 
           {selectedTokenIds.size > 0 && (
             <ScarletButton
+              id="btn-cut-selected-tokens"
               variant="additional-v2"
               size="sm"
               onClick={handleCutSelected}
@@ -316,6 +323,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
 
           {deletedCount > 0 && (
             <ScarletButton
+              id="btn-restore-all-tokens"
               variant="secondary"
               size="sm"
               onClick={onRestoreAllTokens}
@@ -325,6 +333,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           )}
 
           <ScarletButton
+            id="btn-purge-fillers"
             variant="additional-v1"
             size="sm"
             icon={<IconLightning size={14} color="#FFA502" />}
@@ -449,6 +458,8 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                 }}
               >
                 <input
+                  id="input-inline-word-edit"
+                  data-testid="input-inline-word-edit"
                   type="text"
                   value={editText}
                   onChange={e => setEditText(e.target.value)}
@@ -469,6 +480,8 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                   }}
                 />
                 <button
+                  id="btn-save-inline-word-edit"
+                  data-testid="btn-save-inline-word-edit"
                   type="button"
                   onClick={() => handleSaveEdit(token.id)}
                   style={{
@@ -492,6 +505,9 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
             return (
               <span
                 key={token.id}
+                id={`word-token-${token.id}`}
+                data-testid={`word-token-${token.id}`}
+                data-token-text={token.text}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleDeleteToken(token.id);
@@ -522,6 +538,9 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           return (
             <span
               key={token.id}
+              id={`word-token-${token.id}`}
+              data-testid={`word-token-${token.id}`}
+              data-token-text={token.text}
               onClick={e => handleTokenClick(token, e)}
               onDoubleClick={e => handleStartEdit(token, e)}
               title={`[${token.start.toFixed(2)}s - ${token.end.toFixed(2)}s] ${

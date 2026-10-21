@@ -52,6 +52,8 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
       <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
         {/* Import */}
         <div
+          id="subnav-import"
+          data-testid="subnav-import"
           style={getItemStyle('import')}
           onClick={() => onSectionChange('import')}
         >
@@ -60,6 +62,8 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
 
         {/* My Files */}
         <div
+          id="subnav-my-files"
+          data-testid="subnav-my-files"
           style={getItemStyle('my-files')}
           onClick={() => onSectionChange('my-files')}
         >
@@ -69,12 +73,16 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
         {/* Nested Folders */}
         <div style={{ paddingLeft: '14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <div
+            id="subnav-folder-landscape"
+            data-testid="subnav-folder-landscape"
             style={getItemStyle('folder-landscape')}
             onClick={() => onSectionChange('folder-landscape')}
           >
             <span>📁 Landscape</span>
           </div>
           <div
+            id="subnav-folder-nature"
+            data-testid="subnav-folder-nature"
             style={getItemStyle('folder-nature')}
             onClick={() => onSectionChange('folder-nature')}
           >
@@ -95,6 +103,8 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
 
         {/* Webster PS #09: Scarlet Transcript Tab */}
         <div
+          id="subnav-transcript"
+          data-testid="subnav-transcript"
           style={{
             ...getItemStyle('transcript'),
             marginTop: '6px',

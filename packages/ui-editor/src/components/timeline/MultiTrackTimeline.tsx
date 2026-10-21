@@ -833,6 +833,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSeek(clipStart);
                   }}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
                   title={`[Video] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Double-click to seek`}
                   style={{
                     position: 'absolute',
@@ -858,6 +860,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   {isSelected && !isTrackLocked && (
                     <>
                       <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
                         role="separator"
                         aria-label="Trim In-Point (Left handle)"
                         tabIndex={0}
@@ -876,6 +880,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         }}
                       />
                       <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
                         role="separator"
                         aria-label="Trim Out-Point (Right handle)"
                         tabIndex={0}

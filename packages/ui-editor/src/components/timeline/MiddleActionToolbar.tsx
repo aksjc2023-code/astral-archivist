@@ -70,6 +70,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
       {/* Left Action Buttons (Page 1 & 2 Exact Order) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
         <button
+          id="btn-undo"
+          data-testid="btn-undo"
           type="button"
           title="Undo (Ctrl+Z)"
           onClick={onUndo}
@@ -80,6 +82,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-redo"
+          data-testid="btn-redo"
           type="button"
           title="Redo (Ctrl+Y)"
           onClick={onRedo}
@@ -90,6 +94,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-delete"
+          data-testid="btn-delete"
           type="button"
           title="Delete Selection (Del/Backspace)"
           onClick={onDeleteSelected}
@@ -102,6 +108,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         <div style={{ width: '1px', height: '20px', backgroundColor: '#2B303A', margin: '0 6px' }} />
 
         <button
+          id="btn-split"
+          data-testid="btn-split"
           type="button"
           title="Split Clip at Playhead (Ctrl+B / Scissors)"
           onClick={onSplitClip}
@@ -111,6 +119,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-rotate"
+          data-testid="btn-rotate"
           type="button"
           title="Rotate 90°"
           onClick={onRotateClip}
@@ -120,6 +130,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-crop-zoom"
+          data-testid="btn-crop-zoom"
           type="button"
           title="Crop & Zoom Guides"
           onClick={onCropZoom ?? onRotateClip}
@@ -129,6 +141,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-color-tool"
+          data-testid="btn-color-tool"
           type="button"
           title="Color Adjustments"
           onClick={onOpenColorTool}
@@ -138,6 +152,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-equalizer-tool"
+          data-testid="btn-equalizer-tool"
           type="button"
           title="Audio Equalizer & Gain Control"
           onClick={onOpenEqualizerTool}
@@ -147,6 +163,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-subtitles-toggle"
+          data-testid="btn-subtitles-toggle"
           type="button"
           title={isSubtitlesActive ? 'Subtitles Preview: Visible' : 'Subtitles Preview: Hidden'}
           onClick={onToggleSubtitles}
@@ -160,6 +178,8 @@ export const MiddleActionToolbar: React.FC<MiddleActionToolbarProps> = ({
         </button>
 
         <button
+          id="btn-add-marker"
+          data-testid="btn-add-marker"
           type="button"
           title="Add Marker Flag at Playhead"
           onClick={onAddMarker}
