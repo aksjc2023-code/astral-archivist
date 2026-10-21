@@ -304,6 +304,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           </div>
           <div style={{ display: 'flex', gap: '2px' }}>
             <button
+              id="btn-hide-track_title"
+              data-testid="btn-hide-track_title"
               type="button"
               title={activeTrackStates['track_title']?.hidden ? 'Show Track' : 'Hide Track'}
               onClick={() => toggleHidden('track_title')}
@@ -312,6 +314,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               <IconEye size={11} color={activeTrackStates['track_title']?.hidden ? '#FF4757' : '#A4B0BE'} />
             </button>
             <button
+              id="btn-lock-track_title"
+              data-testid="btn-lock-track_title"
               type="button"
               title={activeTrackStates['track_title']?.locked ? 'Unlock Track' : 'Lock Track'}
               onClick={() => toggleLocked('track_title')}
@@ -344,6 +348,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             </div>
             <div style={{ display: 'flex', gap: '2px' }}>
               <button
+                id="btn-hide-track_video"
+                data-testid="btn-hide-track_video"
                 type="button"
                 title={activeTrackStates['track_video']?.hidden ? 'Show Track' : 'Hide Track'}
                 onClick={() => toggleHidden('track_video')}
@@ -352,6 +358,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                 <IconEye size={11} color={activeTrackStates['track_video']?.hidden ? '#FF4757' : '#A4B0BE'} />
               </button>
               <button
+                id="btn-lock-track_video"
+                data-testid="btn-lock-track_video"
                 type="button"
                 title={activeTrackStates['track_video']?.locked ? 'Unlock Track' : 'Lock Track'}
                 onClick={() => toggleLocked('track_video')}
@@ -366,6 +374,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '9px', color: '#8A96A6' }}>
               <button
+                id="btn-vol-popover-track_video"
+                data-testid="btn-vol-popover-track_video"
                 type="button"
                 onClick={e => {
                   e.stopPropagation();
@@ -395,6 +405,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               </span>
             </div>
             <input
+              id="input-vol-track_video"
+              data-testid="input-vol-track_video"
               type="range"
               min="0"
               max="200"
@@ -435,6 +447,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             </div>
             <div style={{ display: 'flex', gap: '2px' }}>
               <button
+                id="btn-mute-track_audio"
+                data-testid="btn-mute-track_audio"
                 type="button"
                 title={activeTrackStates['track_audio']?.muted ? 'Unmute Track' : 'Mute Track'}
                 onClick={() => toggleMuted('track_audio')}
@@ -443,6 +457,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                 <IconVolumeMute size={11} color={activeTrackStates['track_audio']?.muted ? '#FF4757' : '#10AC84'} />
               </button>
               <button
+                id="btn-lock-track_audio"
+                data-testid="btn-lock-track_audio"
                 type="button"
                 title={activeTrackStates['track_audio']?.locked ? 'Unlock Track' : 'Lock Track'}
                 onClick={() => toggleLocked('track_audio')}
@@ -456,6 +472,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           {/* Volume Control Row */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
             <input
+              id="input-vol-track_audio"
+              data-testid="input-vol-track_audio"
               type="range"
               min="0"
               max="200"
@@ -471,6 +489,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               }}
             />
             <span
+              id="btn-vol-badge-track_audio"
+              data-testid="btn-vol-badge-track_audio"
               onClick={e => {
                 e.stopPropagation();
                 setVolumePopoverTrackId(volumePopoverTrackId === 'track_audio' ? null : 'track_audio');
@@ -546,7 +566,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           style={{
             position: 'absolute',
             left: '88px',
-            top: volumePopoverTrackId === 'track_video' ? '36px' : '112px',
+            top: volumePopoverTrackId === 'track_video' ? '70px' : '140px',
             backgroundColor: '#1E222B',
             border: '1px solid #168BFF',
             borderRadius: '8px',
@@ -582,6 +602,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             {[0, 50, 100, 150, 200].map(pct => (
               <button
                 key={pct}
+                id={`btn-preset-${pct}`}
+                data-testid={`btn-preset-${pct}`}
                 type="button"
                 onClick={() => changeTrackVolume(volumePopoverTrackId, pct)}
                 style={{
