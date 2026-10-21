@@ -230,6 +230,9 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
 
   const timecode = formatTimecode(currentTime);
 
+  const isVideoTrackHidden = !!trackStates?.['track_video']?.hidden;
+  const isTitleTrackHidden = !!trackStates?.['track_title']?.hidden;
+
   // Sync HTML5 <video> element play/pause
   useEffect(() => {
     const v = videoRef.current;
@@ -404,10 +407,36 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
               objectFit: aspectRatio === '16:9' ? 'contain' : 'cover',
               transform: `rotate(${rotationAngle}deg)`,
               filter: computedCssFilter,
-              transition: 'filter 0.2s ease, transform 0.25s ease',
+              transition: 'filter 0.2s ease, transform 0.25s ease, opacity 0.2s ease',
               backgroundColor: '#000000',
+              opacity: isVideoTrackHidden ? 0 : 1,
+              visibility: isVideoTrackHidden ? 'hidden' : 'visible',
             }}
           />
+
+          {/* Video Track Hidden Visual Placeholder */}
+          {isVideoTrackHidden && (
+            <div
+              style={{
+                position: 'absolute',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+                color: '#8A94A6',
+                zIndex: 10,
+                pointerEvents: 'none',
+              }}
+            >
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                <line x1="1" y1="1" x2="23" y2="23" />
+              </svg>
+              <span style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.4px' }}>Video Track Hidden</span>
+              <span style={{ fontSize: '11px', color: '#57606F' }}>Click eye icon on Track 2 to unhide</span>
+            </div>
+          )}
 
           {/* Synchronized Background Music Audio Element for Track 3 */}
           <audio
@@ -502,7 +531,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           )}
 
           {/* Dynamic Burned-In Subtitles (Webster Victory Tier) */}
-          {isSubtitlesActive !== false && (
+          {isSubtitlesActive !== false && !isTitleTrackHidden && (
             <div
               style={{
                 position: 'absolute',

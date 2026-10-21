@@ -344,29 +344,37 @@ export const App: React.FC = () => {
     setClips(prev => prev.map(c => (c.id === clipId ? { ...c, volume } : c)));
   }, [pushHistory, tokensByMedia, clips]);
 
-  // Split clip scissors tool (Scissors Icon / Ctrl+B)
+  // Split clip scissors tool (Scissors Icon / Ctrl+B) - strictly targets selected block
   const handleSplitClip = useCallback(() => {
-    const targetClip = clips.find(c => {
-      if (c.trackId !== 'track_video') return false;
-      const start = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
-      const dur = c.timelineDuration ?? c.duration ?? asSeconds(0);
-      return currentTime > start + 0.2 && currentTime < start + dur - 0.2;
-    });
+    if (!selectedClipId) {
+      alert('Please select a clip on the timeline first, then position the playhead inside it to split.');
+      return;
+    }
 
+    const targetClip = clips.find(c => c.id === selectedClipId);
     if (!targetClip) {
-      alert(`Playhead (${currentTime.toFixed(2)}s) must be inside a video clip to split it!`);
+      alert('Selected clip not found. Please click a clip on the timeline to select it.');
+      return;
+    }
+
+    const start = targetClip.timelineStart ?? targetClip.sourceStart ?? asTimelineSeconds(0);
+    const dur = targetClip.timelineDuration ?? targetClip.duration ?? asSeconds(0);
+
+    // Playhead must be inside the selected clip with 0.05s edge boundary tolerance
+    if (currentTime <= start + 0.05 || currentTime >= start + dur - 0.05) {
+      alert(`Playhead (${currentTime.toFixed(2)}s) must be positioned inside the selected clip "${targetClip.title}" (${start.toFixed(2)}s - ${(start + dur).toFixed(2)}s) to split it!`);
       return;
     }
 
     if (trackStates[targetClip.trackId]?.locked) {
-      alert('Cannot split clips on a locked track. Please unlock the track first.');
+      alert(`Cannot split clips on a locked track (${targetClip.trackId}). Please unlock the track first.`);
       return;
     }
 
     pushHistory(tokensByMedia, clips);
 
-    const clipStart = targetClip.timelineStart ?? targetClip.sourceStart ?? asTimelineSeconds(0);
-    const clipDur = targetClip.timelineDuration ?? targetClip.duration ?? asSeconds(0);
+    const clipStart = start;
+    const clipDur = dur;
     const clipIn = targetClip.sourceIn ?? asSourceSeconds(0);
     const clipOut = targetClip.sourceOut ?? asSourceSeconds(clipIn + clipDur);
 
@@ -400,7 +408,7 @@ export const App: React.FC = () => {
       sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
       duration: asSeconds(durationB),
       isSelected: true,
-      transitionIn: '][',
+      transitionIn: targetClip.trackId === 'track_video' ? '][' : undefined,
     };
 
     // Domain boundary validation before state commit
@@ -416,7 +424,7 @@ export const App: React.FC = () => {
     });
 
     setSelectedClipId(clipB.id);
-  }, [clips, currentTime, pushHistory, tokensByMedia, trackStates]);
+  }, [clips, currentTime, pushHistory, tokensByMedia, trackStates, selectedClipId]);
 
   // Trim clip edges (interactive yellow handles) with track-lock check and collision awareness
   const handleTrimClip = useCallback((clipId: string, side: 'left' | 'right', deltaSec: number) => {
