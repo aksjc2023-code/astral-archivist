@@ -7,12 +7,19 @@ export interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
   onExportComplete: () => void;
+  onStartExport?: (
+    settings: ExportSettings,
+    callbacks: {
+      onProgress: (percent: number, stage: string, log?: string) => void;
+    }
+  ) => Promise<void>;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
   onExportComplete,
+  onStartExport,
 }) => {
   const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'mobile' | 'tv' | 'social'>('social');
   const [isExporting, setIsExporting] = useState(false);
@@ -31,35 +38,57 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     wasmMode: 'filter-complex-ass',
   });
 
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout>;
-    if (isExporting) {
-      if (exportProgress < 30) {
+  const handleStart = async () => {
+    setIsExporting(true);
+    setExportProgress(5);
+    setExportStage('Initializing WASM export...');
+
+    if (onStartExport) {
+      try {
+        await onStartExport(settings, {
+          onProgress: (percent, stage, log) => {
+            setExportProgress(percent);
+            setExportStage(stage);
+            if (log) setMemfsLog(log);
+          },
+        });
+        setIsExporting(false);
+        setExportProgress(0);
+        onExportComplete();
+      } catch (err) {
+        setIsExporting(false);
+        alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return;
+    }
+
+    // Simulated fallback progression if real exporter not connected
+    let currentPct = 10;
+    const interval = setInterval(() => {
+      currentPct += 5;
+      if (currentPct < 35) {
         setExportStage('Transcribing 16kHz PCM & building ASS subtitle script...');
         setMemfsLog('[MEMFS] Allocated virtual buffer: input_video.mp4 (142MB)');
-      } else if (exportProgress < 75) {
+      } else if (currentPct < 80) {
         setExportStage(
           settings.wasmMode === 'stream-copy'
             ? 'Executing FFmpeg fast stream-copy (-c copy)...'
             : 'Executing FFmpeg single-pass filter_complex + ASS subtitle burn-in...'
         );
         setMemfsLog('[MEMFS] Processing frame chunks with PTS alignment...');
-      } else if (exportProgress < 98) {
+      } else if (currentPct < 98) {
         setExportStage('Detaching buffer copy & reclaiming MEMFS heap...');
         setMemfsLog('[MEMFS GC] ffmpeg.deleteFile() executed on all virtual descriptors. Heap freed: 142MB.');
       } else {
+        clearInterval(interval);
         setIsExporting(false);
         setExportProgress(0);
         onExportComplete();
         return;
       }
-
-      timer = setTimeout(() => {
-        setExportProgress(p => p + 4);
-      }, 90);
-    }
-    return () => clearTimeout(timer);
-  }, [isExporting, exportProgress, settings.wasmMode, onExportComplete]);
+      setExportProgress(currentPct);
+    }, 100);
+  };
 
   if (!isOpen) return null;
 
@@ -379,7 +408,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           <ScarletButton
             variant="primary"
             size="md"
-            onClick={() => setIsExporting(true)}
+            onClick={handleStart}
             disabled={isExporting}
           >
             {isExporting ? 'Exporting...' : 'Start'}
