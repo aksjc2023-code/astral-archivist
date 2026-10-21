@@ -650,6 +650,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
         {/* Center: 5 Transport Buttons */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button
+            id="btn-first-frame"
+            data-testid="btn-first-frame"
             type="button"
             title="First Frame (|◀)"
             aria-label="First Frame"
@@ -659,6 +661,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <IconFirstFrame size={16} />
           </button>
           <button
+            id="btn-prev-frame"
+            data-testid="btn-prev-frame"
             type="button"
             title="Previous Frame (◀|)"
             aria-label="Previous Frame"
@@ -668,6 +672,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <IconPrevFrame size={16} />
           </button>
           <button
+            id="btn-play-pause"
+            data-testid="btn-play-pause"
             type="button"
             title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
             aria-label={isPlaying ? 'Pause' : 'Play'}
@@ -684,6 +690,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             {isPlaying ? <IconPause size={18} color="#FFFFFF" /> : <IconPlay size={18} color="#FFFFFF" />}
           </button>
           <button
+            id="btn-next-frame"
+            data-testid="btn-next-frame"
             type="button"
             title="Next Frame (|▶)"
             aria-label="Next Frame"
@@ -693,6 +701,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <IconNextFrame size={16} />
           </button>
           <button
+            id="btn-last-frame"
+            data-testid="btn-last-frame"
             type="button"
             title="Last Frame (▶|)"
             aria-label="Last Frame"
@@ -708,6 +718,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           {/* Aspect Ratio Selector Dropdown */}
           <div style={{ position: 'relative' }}>
             <button
+              id="btn-aspect-ratio-menu"
+              data-testid="btn-aspect-ratio-menu"
               type="button"
               title="Select Aspect Ratio (16:9, 9:16, 1:1, 4:5, 21:9, 4:3)"
               aria-label="Select Aspect Ratio"
@@ -752,6 +764,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 {(['16:9', '9:16', '1:1', '4:5', '21:9', '4:3'] as AspectRatio[]).map(ratio => (
                   <button
                     key={ratio}
+                    id={`opt-aspect-${ratio.replace(':', '-')}`}
+                    data-testid={`opt-aspect-${ratio.replace(':', '-')}`}
                     type="button"
                     onClick={() => {
                       onAspectRatioChange(ratio);
@@ -779,6 +793,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           {/* Speed Selector (0.25x - 3.0x) */}
           <div style={{ position: 'relative' }}>
             <button
+              id="btn-speed-menu"
+              data-testid="btn-speed-menu"
               type="button"
               title="Playback Speed (0.25x - 3.0x)"
               aria-label="Select Playback Speed"
@@ -821,6 +837,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 {[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].map(speed => (
                   <button
                     key={speed}
+                    id={`opt-speed-${String(speed).replace('.', '_')}`}
+                    data-testid={`opt-speed-${String(speed).replace('.', '_')}`}
                     type="button"
                     onClick={() => {
                       onPlaybackSpeedChange?.(speed);
