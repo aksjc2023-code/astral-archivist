@@ -1,5 +1,5 @@
-import React, { useRef } from 'react';
-import { TimelineClip, MarkerFlag, PlaybackSegment } from '@astral/core';
+import React, { useRef, useEffect } from 'react';
+import { TimelineClip, MarkerFlag, PlaybackSegment, formatTimecode } from '@astral/core';
 import {
   IconEye,
   IconLock,
@@ -14,8 +14,10 @@ export interface MultiTrackTimelineProps {
   clips: TimelineClip[];
   markers: MarkerFlag[];
   scale: number; // Pixels per second multiplier
+  selectedClipId?: string;
   onSeek: (time: number) => void;
   onSelectClip?: (clipId: string) => void;
+  onDeleteMarker?: (markerId: string) => void;
 }
 
 export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
@@ -25,24 +27,53 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   clips,
   markers,
   scale = 1.0,
+  selectedClipId,
   onSeek,
   onSelectClip,
+  onDeleteMarker,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
-  const pxPerSec = 4.5 * scale;
-  const totalTimelineWidthPx = Math.max(1200, duration * pxPerSec + 200);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isDraggingRef = useRef(false);
 
-  const handleRulerClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!rulerRef.current) return;
+  const pxPerSec = 22 * scale;
+  const totalTimelineWidthPx = Math.max(1400, duration * pxPerSec + 300);
+
+  const calculateTimeFromClientX = (clientX: number) => {
+    if (!rulerRef.current) return 0;
     const rect = rulerRef.current.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const clickedTime = Math.max(0, clickX / pxPerSec);
+    const clickX = clientX - rect.left;
+    return Math.max(0, Math.min(duration, clickX / pxPerSec));
+  };
+
+  const handleStartScrubbing = (e: React.MouseEvent) => {
+    isDraggingRef.current = true;
+    const clickedTime = calculateTimeFromClientX(e.clientX);
     onSeek(clickedTime);
   };
 
-  // 20-second ruler tick intervals
-  const tickIntervalSec = 20;
-  const totalTicks = Math.ceil(duration / tickIntervalSec) + 3;
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDraggingRef.current) return;
+      const newTime = calculateTimeFromClientX(e.clientX);
+      onSeek(newTime);
+    };
+
+    const handleMouseUp = () => {
+      isDraggingRef.current = false;
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [pxPerSec, duration, onSeek]);
+
+  // 5-second ruler tick intervals for clear, usable precision
+  const tickIntervalSec = scale > 1.5 ? 2 : 5;
+  const totalTicks = Math.ceil(duration / tickIntervalSec) + 4;
 
   const playheadPositionPx = currentTime * pxPerSec;
 
@@ -86,7 +117,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             fontSize: '16px',
             fontWeight: 600,
           }}
-          title="Add New Track"
+          title="Add New Video/Audio Track"
           onClick={() => alert('Add Video, Audio, or Subtitle Track')}
         >
           +
@@ -151,6 +182,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
       {/* Scrollable Tracks Canvas Well */}
       <div
+        ref={scrollContainerRef}
         style={{
           flex: 1,
           overflowX: 'auto',
@@ -163,16 +195,16 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           {/* Timeline Timecode Ruler (Page 1) */}
           <div
             ref={rulerRef}
-            onClick={handleRulerClick}
+            onMouseDown={handleStartScrubbing}
             style={{
               height: '28px',
               backgroundColor: '#14171C',
               borderBottom: '1px solid #2B303A',
               position: 'relative',
-              cursor: 'pointer',
+              cursor: 'ew-resize',
             }}
           >
-            {/* 20-Second Time Markers */}
+            {/* Time Markers */}
             {Array.from({ length: totalTicks }).map((_, i) => {
               const tickSec = i * tickIntervalSec;
               const leftPx = tickSec * pxPerSec;
@@ -191,6 +223,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     display: 'flex',
                     alignItems: 'center',
                     paddingLeft: '4px',
+                    pointerEvents: 'none',
                   }}
                 >
                   <div style={{ width: '1px', height: '8px', backgroundColor: '#454D5B', position: 'absolute', left: 0, bottom: 0 }} />
@@ -205,19 +238,29 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             {markers.map(m => (
               <div
                 key={m.id}
-                title={`${m.label} (${m.time}s)`}
+                onClick={e => {
+                  e.stopPropagation();
+                  onSeek(m.time);
+                }}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (onDeleteMarker) onDeleteMarker(m.id);
+                }}
+                title={`${m.label} (${m.time.toFixed(1)}s) - Click to seek, Right-click to delete`}
                 style={{
                   position: 'absolute',
                   left: `${m.time * pxPerSec}px`,
                   top: '2px',
                   transform: 'translateX(-50%)',
-                  width: '10px',
-                  height: '14px',
+                  width: '12px',
+                  height: '16px',
                   backgroundColor: m.color,
                   clipPath: 'polygon(0% 0%, 100% 0%, 100% 70%, 50% 100%, 0% 70%)',
-                  zIndex: 15,
+                  zIndex: 25,
                   cursor: 'pointer',
-                  boxShadow: `0 2px 6px ${m.color}88`,
+                  boxShadow: `0 2px 8px ${m.color}AA`,
+                  transition: 'transform 0.1s ease',
                 }}
               />
             ))}
@@ -232,25 +275,33 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               left: `${playheadPositionPx}px`,
               width: '2px',
               backgroundColor: '#FF4757',
-              zIndex: 30,
+              zIndex: 35,
               pointerEvents: 'none',
               transform: 'translateX(-1px)',
             }}
           >
-            {/* Top Playhead Scrubber Badge on Ruler */}
+            {/* Top Playhead Scrubber Badge on Ruler with Live Timecode Tooltip */}
             <div
               style={{
                 position: 'absolute',
                 top: 0,
                 left: '50%',
                 transform: 'translateX(-50%)',
-                width: '12px',
-                height: '16px',
+                width: '14px',
+                height: '18px',
                 backgroundColor: '#FF4757',
                 borderRadius: '0 0 6px 6px',
-                boxShadow: '0 2px 6px rgba(255, 71, 87, 0.6)',
+                boxShadow: '0 2px 8px rgba(255, 71, 87, 0.7)',
+                cursor: 'grab',
+                pointerEvents: 'auto',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
-            />
+              onMouseDown={handleStartScrubbing}
+            >
+              <div style={{ width: '4px', height: '4px', backgroundColor: '#FFFFFF', borderRadius: '50%' }} />
+            </div>
           </div>
 
           {/* Track 1 — Titles & Captions Strip */}
@@ -262,32 +313,46 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               backgroundColor: '#14171C',
             }}
           >
-            {titleClips.map(clip => (
-              <div
-                key={clip.id}
-                style={{
-                  position: 'absolute',
-                  left: `${clip.sourceStart * pxPerSec}px`,
-                  width: `${clip.duration * pxPerSec}px`,
-                  height: '24px',
-                  top: '6px',
-                  backgroundColor: '#8854D0',
-                  borderRadius: '6px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  padding: '0 8px',
-                  color: '#FFFFFF',
-                  fontSize: '11px',
-                  fontWeight: 500,
-                  boxShadow: '0 2px 6px rgba(136, 84, 208, 0.3)',
-                  overflow: 'hidden',
-                  whiteSpace: 'nowrap',
-                  cursor: 'pointer',
-                }}
-              >
-                <span>{clip.title}</span>
-              </div>
-            ))}
+            {titleClips.map(clip => {
+              const isSelected = clip.id === selectedClipId;
+              return (
+                <div
+                  key={clip.id}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onDoubleClick={e => {
+                    e.stopPropagation();
+                    onSeek(clip.sourceStart);
+                  }}
+                  title={`[Title] ${clip.title} (Double-click to seek)`}
+                  style={{
+                    position: 'absolute',
+                    left: `${clip.sourceStart * pxPerSec}px`,
+                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
+                    height: '24px',
+                    top: '6px',
+                    backgroundColor: '#8854D0',
+                    border: isSelected ? '2px solid #FFD32A' : '1px solid #9B63E6',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 8px',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    boxShadow: isSelected ? '0 0 10px rgba(255, 211, 42, 0.5)' : '0 2px 6px rgba(136, 84, 208, 0.3)',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    cursor: 'pointer',
+                    transition: 'all 0.12s ease',
+                  }}
+                >
+                  <span>{clip.title}</span>
+                </div>
+              );
+            })}
           </div>
 
           {/* Track 2 — Video Clips + Integrated Waveform (Page 1) */}
@@ -300,15 +365,23 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             }}
           >
             {videoClips.map((clip, index) => {
-              const isSelected = clip.isSelected;
+              const isSelected = clip.id === selectedClipId || clip.isSelected;
               return (
                 <div
                   key={clip.id}
-                  onClick={() => onSelectClip?.(clip.id)}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onDoubleClick={e => {
+                    e.stopPropagation();
+                    onSeek(clip.sourceStart);
+                  }}
+                  title={`[Video] ${clip.title} (${clip.duration.toFixed(1)}s) - Click to select, Double-click to seek`}
                   style={{
                     position: 'absolute',
                     left: `${clip.sourceStart * pxPerSec}px`,
-                    width: `${clip.duration * pxPerSec}px`,
+                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
                     height: '66px',
                     top: '5px',
                     backgroundColor: '#2A3548',
@@ -319,7 +392,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     cursor: 'pointer',
-                    boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.4)' : 'none',
+                    boxShadow: isSelected ? '0 0 14px rgba(255, 211, 42, 0.45)' : 'none',
+                    transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
                   }}
                 >
                   {/* Yellow Drag Handles if Selected (Page 1) */}
@@ -331,9 +405,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           left: '0',
                           top: '0',
                           bottom: '0',
-                          width: '5px',
+                          width: '6px',
                           backgroundColor: '#FFD32A',
                           cursor: 'ew-resize',
+                          zIndex: 10,
                         }}
                       />
                       <div
@@ -342,9 +417,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           right: '0',
                           top: '0',
                           bottom: '0',
-                          width: '5px',
+                          width: '6px',
                           backgroundColor: '#FFD32A',
                           cursor: 'ew-resize',
+                          zIndex: 10,
                         }}
                       />
                     </>
@@ -359,6 +435,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                       display: 'flex',
                       alignItems: 'center',
                       gap: '6px',
+                      overflow: 'hidden',
                     }}
                   >
                     <span style={{ fontSize: '11px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap' }}>
@@ -378,7 +455,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     }}
                   >
                     {/* Simulated Audio Bars */}
-                    {Array.from({ length: Math.min(40, Math.floor(clip.duration * 1.5)) }).map((_, barIdx) => {
+                    {Array.from({ length: Math.min(50, Math.floor(clip.duration * 2.2)) }).map((_, barIdx) => {
                       const h = 4 + ((barIdx * 7) % 18);
                       return (
                         <div
@@ -428,47 +505,61 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               backgroundColor: '#14171C',
             }}
           >
-            {audioClips.map(clip => (
-              <div
-                key={clip.id}
-                style={{
-                  position: 'absolute',
-                  left: `${clip.sourceStart * pxPerSec}px`,
-                  width: `${clip.duration * pxPerSec}px`,
-                  height: '32px',
-                  top: '6px',
-                  backgroundColor: '#10AC84',
-                  borderRadius: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  padding: '3px 8px',
-                  color: '#FFFFFF',
-                  boxShadow: '0 2px 8px rgba(16, 172, 132, 0.3)',
-                  overflow: 'hidden',
-                  cursor: 'pointer',
-                }}
-              >
-                <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                  {clip.title}
-                </span>
+            {audioClips.map(clip => {
+              const isSelected = clip.id === selectedClipId;
+              return (
+                <div
+                  key={clip.id}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onDoubleClick={e => {
+                    e.stopPropagation();
+                    onSeek(clip.sourceStart);
+                  }}
+                  title={`[Audio] ${clip.title} (Double-click to seek)`}
+                  style={{
+                    position: 'absolute',
+                    left: `${clip.sourceStart * pxPerSec}px`,
+                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
+                    height: '32px',
+                    top: '6px',
+                    backgroundColor: '#10AC84',
+                    border: isSelected ? '2px solid #FFD32A' : 'none',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    padding: '3px 8px',
+                    color: '#FFFFFF',
+                    boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : '0 2px 8px rgba(16, 172, 132, 0.3)',
+                    overflow: 'hidden',
+                    cursor: 'pointer',
+                    transition: 'all 0.12s ease',
+                  }}
+                >
+                  <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                    {clip.title}
+                  </span>
 
-                {/* Mint-Green Acoustic Waveform */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>
-                  {Array.from({ length: 60 }).map((_, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        width: '2px',
-                        height: `${3 + ((i * 11) % 12)}px`,
-                        backgroundColor: '#7BED9F',
-                        borderRadius: '1px',
-                      }}
-                    />
-                  ))}
+                  {/* Mint-Green Acoustic Waveform */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>
+                    {Array.from({ length: Math.min(80, Math.floor(clip.duration * 2)) }).map((_, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          width: '2px',
+                          height: `${3 + ((i * 11) % 12)}px`,
+                          backgroundColor: '#7BED9F',
+                          borderRadius: '1px',
+                        }}
+                      />
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

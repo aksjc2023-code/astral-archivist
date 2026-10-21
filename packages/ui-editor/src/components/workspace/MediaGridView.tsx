@@ -218,6 +218,31 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
                 <span>{asset.resolution ?? '1080p'}</span>
                 <span>{Math.floor(asset.duration)}s</span>
               </div>
+              <button
+                type="button"
+                onClick={e => {
+                  e.stopPropagation();
+                  onAddToTimeline(asset);
+                }}
+                title="Add to Timeline"
+                style={{
+                  marginTop: '6px',
+                  width: '100%',
+                  backgroundColor: '#168BFF',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '6px',
+                  padding: '4px 0',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  transition: 'background-color 0.12s ease',
+                }}
+                onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#329AFF')}
+                onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#168BFF')}
+              >
+                + Add to Timeline
+              </button>
             </div>
           </div>
         ))}

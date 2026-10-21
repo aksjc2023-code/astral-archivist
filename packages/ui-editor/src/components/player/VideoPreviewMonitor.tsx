@@ -1,5 +1,5 @@
-import React, { useRef, useState, useEffect } from 'react';
-import { WordToken, formatTimecode } from '@astral/core';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
+import { WordToken, ToolSettings, formatTimecode } from '@astral/core';
 import {
   IconPlay,
   IconPause,
@@ -29,6 +29,12 @@ export interface VideoPreviewMonitorProps {
   onLastFrame?: () => void;
   videoPreviewUrl?: string;
   isSeekLocked?: boolean;
+  playbackSpeed?: number;
+  onPlaybackSpeedChange?: (speed: number) => void;
+  rotationAngle?: number;
+  activeFilter?: string;
+  colorAdjustments?: ToolSettings['colorAdjustments'];
+  onClearActiveFilter?: () => void;
 }
 
 export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
@@ -44,13 +50,21 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onPrevFrame,
   onFirstFrame,
   onLastFrame,
-  videoPreviewUrl = 'https://images.unsplash.com/photo-1517457373958-b7bdd4587205?w=1200&q=85',
+  videoPreviewUrl = 'https://www.w3schools.com/html/mov_bbb.mp4',
   isSeekLocked = false,
+  playbackSpeed = 1.0,
+  onPlaybackSpeedChange,
+  rotationAngle = 0,
+  activeFilter = 'none',
+  colorAdjustments,
+  onClearActiveFilter,
 }) => {
   const [volume, setVolume] = useState(0.85);
   const [isMuted, setIsMuted] = useState(false);
   const [showCropGuides, setShowCropGuides] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const scrubberTrackRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // Active word token for live karaoke subtitle overlay
   const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
@@ -59,6 +73,68 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   );
 
   const timecode = formatTimecode(currentTime);
+
+  // Sync HTML5 <video> element play/pause
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (isPlaying) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [isPlaying]);
+
+  // Sync playback speed
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.playbackRate = playbackSpeed;
+  }, [playbackSpeed]);
+
+  // Sync volume and mute
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.volume = volume;
+    v.muted = isMuted;
+  }, [volume, isMuted]);
+
+  // Sync currentTime to video offset
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const vidDuration = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : 10;
+    const targetOffset = currentTime % vidDuration;
+    if (Math.abs(v.currentTime - targetOffset) > 0.35) {
+      v.currentTime = targetOffset;
+    }
+  }, [currentTime]);
+
+  // Compute live CSS filters from Color Grading & LUT settings
+  const computedCssFilter = useMemo(() => {
+    const parts: string[] = [];
+    if (colorAdjustments) {
+      if (colorAdjustments.brightness !== 0) {
+        parts.push(`brightness(${Math.max(0.2, 1 + colorAdjustments.brightness / 100)})`);
+      }
+      if (colorAdjustments.contrast !== 0) {
+        parts.push(`contrast(${Math.max(0.2, 1 + colorAdjustments.contrast / 100)})`);
+      }
+      if (colorAdjustments.saturation !== 0) {
+        parts.push(`saturate(${Math.max(0, 1 + colorAdjustments.saturation / 100)})`);
+      }
+    }
+    if (activeFilter && activeFilter !== 'none') {
+      if (activeFilter === 'Retro Film') parts.push('sepia(0.6) contrast(1.15) brightness(0.95)');
+      else if (activeFilter === 'Cyberpunk Neon') parts.push('hue-rotate(180deg) saturate(2.5) contrast(1.3)');
+      else if (activeFilter === 'Golden Sunset') parts.push('sepia(0.4) saturate(1.8) hue-rotate(-20deg)');
+      else if (activeFilter === 'Moody B&W') parts.push('grayscale(1) contrast(1.4)');
+      else if (activeFilter === 'VHS Distortion') parts.push('contrast(1.5) hue-rotate(90deg)');
+      else if (activeFilter === 'Teal & Orange') parts.push('saturate(2) contrast(1.2) hue-rotate(30deg)');
+    }
+    return parts.length > 0 ? parts.join(' ') : 'none';
+  }, [colorAdjustments, activeFilter]);
 
   const handleScrubberClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!scrubberTrackRef.current || duration <= 0) return;
@@ -110,11 +186,26 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundImage: `url(${videoPreviewUrl})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
           }}
         >
+          {/* Active Live Video Element */}
+          <video
+            ref={videoRef}
+            src={videoPreviewUrl}
+            playsInline
+            loop
+            muted={isMuted}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: aspectRatio === '16:9' ? 'contain' : 'cover',
+              transform: `rotate(${rotationAngle}deg)`,
+              filter: computedCssFilter,
+              transition: 'filter 0.2s ease, transform 0.25s ease',
+              backgroundColor: '#000000',
+            }}
+          />
+
           {/* Subtle Vignette Gradient */}
           <div
             style={{
@@ -124,6 +215,40 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
               pointerEvents: 'none',
             }}
           />
+
+          {/* Active Filter Badge */}
+          {activeFilter && activeFilter !== 'none' && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '12px',
+                left: '12px',
+                backgroundColor: 'rgba(22, 139, 255, 0.9)',
+                backdropFilter: 'blur(6px)',
+                color: '#FFFFFF',
+                fontSize: '11px',
+                fontWeight: 600,
+                padding: '3px 10px',
+                borderRadius: '9999px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                zIndex: 20,
+              }}
+            >
+              <span>Filter: {activeFilter}</span>
+              {onClearActiveFilter && (
+                <span
+                  onClick={onClearActiveFilter}
+                  style={{ cursor: 'pointer', fontWeight: 800, fontSize: '12px' }}
+                  title="Remove Filter"
+                >
+                  ✕
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Crop Overlay Guidelines (Page 1 Toggle) */}
           {showCropGuides && (
@@ -158,6 +283,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 padding: '2px 8px',
                 borderRadius: '9999px',
                 backdropFilter: 'blur(4px)',
+                zIndex: 20,
               }}
             >
               SEEK-LOCK MUTEX
@@ -173,6 +299,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
               right: '20px',
               textAlign: 'center',
               pointerEvents: 'none',
+              zIndex: 15,
             }}
           >
             <div
@@ -206,7 +333,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 })
               ) : (
                 <span style={{ fontSize: '13px', color: '#A4B0BE', fontStyle: 'italic' }}>
-                  ScarletCut Interactive Preview Monitor
+                  ScarletCut Live Video Monitor
                 </span>
               )}
             </div>
@@ -329,12 +456,12 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           </button>
         </div>
 
-        {/* Right: Aspect Ratio, Volume, Crop, Fullscreen */}
+        {/* Right: Aspect Ratio, Speed Selector (0.25x - 3.0x), Volume, Crop, Fullscreen */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {/* Aspect Ratio Selector */}
           <button
             type="button"
-            title="Switch Aspect Ratio"
+            title="Switch Aspect Ratio (16:9 / 9:16)"
             onClick={() => onAspectRatioChange(aspectRatio === '16:9' ? '9:16' : '16:9')}
             style={{
               backgroundColor: '#22262E',
@@ -352,6 +479,74 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <span>{aspectRatio}</span>
             <IconChevronDown size={10} color="#A4B0BE" />
           </button>
+
+          {/* Speed Selector (0.25x - 3.0x) */}
+          <div style={{ position: 'relative' }}>
+            <button
+              type="button"
+              title="Playback Speed (0.25x - 3.0x)"
+              onClick={() => setShowSpeedMenu(!showSpeedMenu)}
+              style={{
+                backgroundColor: '#22262E',
+                color: playbackSpeed !== 1.0 ? '#168BFF' : '#FFFFFF',
+                border: playbackSpeed !== 1.0 ? '1px solid #168BFF' : '1px solid #2B303A',
+                borderRadius: '9999px',
+                padding: '3px 10px',
+                fontSize: '11px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                cursor: 'pointer',
+              }}
+            >
+              <span>{playbackSpeed}x</span>
+              <IconChevronDown size={10} color="#A4B0BE" />
+            </button>
+            {showSpeedMenu && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: '36px',
+                  right: '0',
+                  backgroundColor: '#1E232B',
+                  border: '1px solid #2B303A',
+                  borderRadius: '8px',
+                  padding: '4px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '2px',
+                  zIndex: 60,
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+                  minWidth: '70px',
+                }}
+              >
+                {[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].map(speed => (
+                  <button
+                    key={speed}
+                    type="button"
+                    onClick={() => {
+                      onPlaybackSpeedChange?.(speed);
+                      setShowSpeedMenu(false);
+                    }}
+                    style={{
+                      backgroundColor: playbackSpeed === speed ? '#168BFF' : 'transparent',
+                      color: playbackSpeed === speed ? '#FFFFFF' : '#A4B0BE',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      textAlign: 'center',
+                      fontWeight: playbackSpeed === speed ? 600 : 400,
+                    }}
+                  >
+                    {speed}x
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           {/* Volume */}
           <button

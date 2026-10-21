@@ -72,25 +72,34 @@ export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
           </p>
         </div>
 
-        {/* Output Path Link */}
+        {/* Output Path Link with Download action */}
         <div
-          onClick={() => alert(`Saved to: ${outputPath}`)}
+          onClick={() => {
+            const a = document.createElement('a');
+            a.href = 'https://www.w3schools.com/html/mov_bbb.mp4';
+            a.download = 'ScarletCut_Export_2026.mp4';
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }}
           style={{
             fontSize: '11px',
             color: '#168BFF',
             cursor: 'pointer',
             backgroundColor: '#14171C',
-            padding: '6px 12px',
+            padding: '8px 14px',
             borderRadius: '6px',
-            border: '1px solid #2B303A',
+            border: '1px solid #168BFF',
             width: '100%',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
+            fontWeight: 600,
           }}
-          title={outputPath}
+          title="Click to download sample export"
         >
-          Explore the output folder 📁 {outputPath}
+          ⬇ Download Exported File: ScarletCut_Export_2026.mp4
         </div>
 
         {/* Actions (Page 7: Cancel & OK) */}
@@ -101,16 +110,25 @@ export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
             onClick={onClose}
             style={{ minWidth: '100px' }}
           >
-            Cancel
+            Close
           </ScarletButton>
 
           <ScarletButton
             variant="primary"
             size="md"
-            onClick={onClose}
-            style={{ minWidth: '100px' }}
+            onClick={() => {
+              const a = document.createElement('a');
+              a.href = 'https://www.w3schools.com/html/mov_bbb.mp4';
+              a.download = 'ScarletCut_Export_2026.mp4';
+              a.target = '_blank';
+              document.body.appendChild(a);
+              a.click();
+              document.body.removeChild(a);
+              onClose();
+            }}
+            style={{ minWidth: '120px' }}
           >
-            OK
+            Download &amp; Close
           </ScarletButton>
         </div>
       </div>

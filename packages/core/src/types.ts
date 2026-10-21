@@ -32,6 +32,7 @@ export interface MediaAsset {
   type: 'video' | 'audio' | 'image';
   duration: number;     // in seconds
   thumbnailUrl: string;
+  videoUrl?: string;    // Direct MP4 video stream URL for real player demo
   isUsedOnTimeline: boolean;
   resolution?: string;
   category?: string;
@@ -46,6 +47,7 @@ export interface TimelineClip {
   duration: number;
   color: string;
   mediaId?: string;
+  videoUrl?: string;    // Direct MP4 video stream URL for playback
   isSelected?: boolean;
   hasWaveform?: boolean;
   transitionIn?: string;
@@ -100,6 +102,7 @@ export interface ToolSettings {
     noise: number;
     edges: number;
     opacity: number;
+    enabled?: boolean;
   };
   colorAdjustments: {
     brightness: number;
@@ -127,6 +130,9 @@ export interface ToolSettings {
     feathering: number;
     outline: boolean;
   };
+  activeFilter?: string;      // E.g. 'Retro Film', 'Cyberpunk Neon', etc.
+  rotationAngle?: number;     // 0, 90, 180, 270
+  playbackSpeed?: number;     // 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0
 }
 
 export interface ExportSettings {
