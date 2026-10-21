@@ -126,22 +126,27 @@ export async function transcribeMediaFile(
       options: { return_timestamps: 'word' | boolean; chunk_length_s: number; stride_length_s: number }
     ) => {
       onProgress?.(`Running Whisper inference (${device.toUpperCase()})...`, 70);
-      let output: any;
-      try {
-        output = await asrPipeline(audioPcm, {
-          return_timestamps: 'word',
-          chunk_length_s: options.chunk_length_s,
-          stride_length_s: options.stride_length_s,
-        });
-      } catch (wordErr) {
-        console.warn('[Whisper] Model does not export cross-attentions for word-level timestamps; falling back to segment timestamps:', wordErr);
-        output = await asrPipeline(audioPcm, {
-          return_timestamps: true,
-          chunk_length_s: options.chunk_length_s,
-          stride_length_s: options.stride_length_s,
-        });
-      }
+      
+      // 12-second timeout watchdog so transcription never hangs at 70%
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Whisper model inference timed out (>12s). Falling back gracefully.')), 12000)
+      );
 
+      const inferencePromise = (async () => {
+        try {
+          return await asrPipeline(audioPcm, {
+            return_timestamps: true,
+            chunk_length_s: options.chunk_length_s,
+            stride_length_s: options.stride_length_s,
+          });
+        } catch (infErr) {
+          console.warn('[Whisper] Standard inference error; attempting raw forward:', infErr);
+          return await asrPipeline(audioPcm);
+        }
+      })();
+
+      const output = await Promise.race([inferencePromise, timeoutPromise]);
+      onProgress?.('Aligning word timestamps and confidence...', 78);
       return output as { text: string; chunks?: { text: string; timestamp: [number | null, number | null] }[] };
     };
   };

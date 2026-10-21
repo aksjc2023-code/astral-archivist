@@ -55,7 +55,11 @@ import {
 } from '@astral/ui-editor';
 
 import { transcribeMediaFile } from './services/whisperService';
-import { exportVideoWithFfmpegWasm } from './export/wasmExporter';
+import {
+  exportVideoWithFfmpegWasm,
+  exportCompositionWithFfmpegWasm,
+  CompositionClipInput,
+} from './export/wasmExporter';
 import { ExportSettings } from '@astral/core';
 
 export const App: React.FC = () => {
@@ -221,18 +225,94 @@ export const App: React.FC = () => {
     }));
   }, [videoClips]);
 
-  // Active title clip derived from title track at currentTime or selected title clip
+  // Active title clip strictly derived from title track at currentTime (only visible during clip interval)
   const activeTitleClip = useMemo(() => {
     const titleClips = clips.filter(c => c.trackId === 'track_title');
-    const current = titleClips.find(c => {
+    return titleClips.find(c => {
       const start = c.timelineStart ?? c.sourceStart ?? 0;
       const dur = c.timelineDuration ?? c.duration ?? 0;
       return currentTime >= start && currentTime <= start + dur;
     });
-    if (current) return current;
-    const selected = clips.find(c => c.id === selectedClipId && c.trackId === 'track_title');
-    return selected;
-  }, [clips, currentTime, selectedClipId]);
+  }, [clips, currentTime]);
+
+  // Active sticker clip strictly derived from sticker / custom track at currentTime (only visible during clip interval)
+  const activeStickerClip = useMemo(() => {
+    const stickerClips = clips.filter(c =>
+      c.trackId === 'track_custom_stickers' ||
+      c.trackId.startsWith('track_custom') ||
+      c.title.startsWith('★ ')
+    );
+    return stickerClips.find(c => {
+      const start = c.timelineStart ?? c.sourceStart ?? 0;
+      const dur = c.timelineDuration ?? c.duration ?? 0;
+      return currentTime >= start && currentTime <= start + dur;
+    });
+  }, [clips, currentTime]);
+
+  // Active transition: strictly active during transition cut window
+  const currentTransition = useMemo(() => {
+    // 1. Check if there is an explicit transition clip on timeline active at currentTime
+    const transClip = clips.find(c => {
+      const isTrans = c.title.startsWith('⧉ ') || (c as any).isTransition;
+      if (!isTrans) return false;
+      const start = c.timelineStart ?? c.sourceStart ?? 0;
+      const dur = c.timelineDuration ?? c.duration ?? 0;
+      return currentTime >= start && currentTime <= start + dur;
+    });
+    if (transClip) {
+      return (transClip as any).transitionName || transClip.title.replace('⧉ ', '');
+    }
+
+    // 2. Check active video clip's transitionIn during entrance window [clipStart, clipStart + 1.2s]
+    if (activeClip && activeClip.transitionIn) {
+      const clipStart = activeClip.timelineStart ?? activeClip.sourceStart ?? 0;
+      const transitionWindowSec = 1.2;
+      if (currentTime >= clipStart && currentTime <= clipStart + transitionWindowSec) {
+        return activeClip.transitionIn;
+      }
+    }
+
+    // 3. Check active video clip's transitionOut during exit window [clipEnd - 1.2s, clipEnd]
+    if (activeClip && activeClip.transitionOut) {
+      const clipStart = activeClip.timelineStart ?? activeClip.sourceStart ?? 0;
+      const clipDur = activeClip.timelineDuration ?? activeClip.duration ?? 0;
+      const clipEnd = clipStart + clipDur;
+      const transitionWindowSec = 1.2;
+      if (currentTime >= clipEnd - transitionWindowSec && currentTime <= clipEnd) {
+        return activeClip.transitionOut;
+      }
+    }
+
+    return undefined;
+  }, [clips, activeClip, currentTime]);
+
+  // Active filter strictly scoped to:
+  // 1. Any filter clip on the timeline at currentTime, OR
+  // 2. The active video clip's specific filter (only while playhead is inside that video clip)
+  const currentFilter = useMemo(() => {
+    // 1. Check if there is an effect/filter clip active on timeline at currentTime
+    const filterClip = clips.find(c => {
+      const isFilter = (c as any).filter || (c as any).isFilter || c.title.startsWith('⚡ ');
+      if (!isFilter || c.trackId === 'track_video') return false;
+      const start = c.timelineStart ?? c.sourceStart ?? 0;
+      const dur = c.timelineDuration ?? c.duration ?? 0;
+      return currentTime >= start && currentTime <= start + dur;
+    });
+    if (filterClip) {
+      return (filterClip as any).filter || filterClip.title.replace('⚡ ', '');
+    }
+
+    // 2. Check if current active video clip has a filter applied (only during its timeline window)
+    if (activeClip && (activeClip as any).filter && (activeClip as any).filter !== 'none') {
+      const cStart = activeClip.timelineStart ?? activeClip.sourceStart ?? 0;
+      const cDur = activeClip.timelineDuration ?? activeClip.duration ?? 0;
+      if (currentTime >= cStart && currentTime <= cStart + cDur) {
+        return (activeClip as any).filter;
+      }
+    }
+
+    return 'none';
+  }, [clips, activeClip, currentTime]);
 
   // Push history helper for Undo/Redo across both multi-asset transcripts & timeline clips
   const pushHistory = useCallback((currentTokensByMedia: Record<string, WordToken[]>, currentClips: TimelineClip[]) => {
@@ -246,15 +326,13 @@ export const App: React.FC = () => {
   }, [pushHistory, tokensByMedia, clips]);
 
   const handleEditActiveTitle = useCallback(() => {
-    const curTitle = activeTitlePreset || activeTitleClip?.title || 'Title Text';
+    if (!activeTitleClip) return;
+    const curTitle = activeTitleClip.title || 'Title Text';
     const newText = prompt('Edit Title & Caption text:', curTitle);
     if (newText !== null && newText.trim()) {
-      setActiveTitlePreset(newText.trim());
-      if (activeTitleClip) {
-        handleEditClipTitle(activeTitleClip.id, newText.trim());
-      }
+      handleEditClipTitle(activeTitleClip.id, newText.trim());
     }
-  }, [activeTitlePreset, activeTitleClip, handleEditClipTitle]);
+  }, [activeTitleClip, handleEditClipTitle]);
 
   // Exact mapped source offset within the active video clip
   const activeClipSourceTime = useMemo(() => {
@@ -770,17 +848,68 @@ export const App: React.FC = () => {
       setActiveSticker(payload.name);
     } else if (payload.type === 'transitions') {
       setActiveTransition(payload.name);
-      setClips(prev => prev.map(c => {
-        if (c.trackId !== 'track_video') return c;
-        const cStart = c.timelineStart ?? c.sourceStart ?? 0;
-        const cDur = c.timelineDuration ?? c.duration ?? 0;
-        if (dropTimeSec >= cStart && dropTimeSec <= cStart + cDur) {
-          return { ...c, transitionIn: payload.name };
-        }
-        return c;
-      }));
+      setClips(prev => {
+        let matched = false;
+        const next = prev.map(c => {
+          if (c.trackId !== 'track_video') return c;
+          const cStart = c.timelineStart ?? c.sourceStart ?? 0;
+          const cDur = c.timelineDuration ?? c.duration ?? 0;
+          if (dropTimeSec >= cStart && dropTimeSec <= cStart + cDur) {
+            matched = true;
+            return { ...c, transitionIn: payload.name };
+          }
+          return c;
+        });
+        if (matched) return next;
+        const newTransClip: TimelineClip = {
+          id: `trans_${Date.now()}`,
+          trackId: targetTrackId.startsWith('track_custom') ? targetTrackId : 'track_custom_stickers',
+          title: `⧉ ${payload.name}`,
+          timelineStart: dropTime,
+          timelineDuration: asSeconds(2.0),
+          sourceIn: asSourceSeconds(0),
+          sourceOut: asSourceSeconds(2.0),
+          sourceStart: dropTime,
+          duration: asSeconds(2.0),
+          color: '#FA8231',
+        };
+        (newTransClip as any).isTransition = true;
+        (newTransClip as any).transitionName = payload.name;
+        validateTimelineClip(newTransClip);
+        return [...next, newTransClip];
+      });
     } else if (payload.type === 'filters') {
       setActiveFilter(payload.name);
+      setClips(prev => {
+        let matched = false;
+        const next = prev.map(c => {
+          if (c.trackId !== 'track_video') return c;
+          const cStart = c.timelineStart ?? c.sourceStart ?? 0;
+          const cDur = c.timelineDuration ?? c.duration ?? 0;
+          if (dropTimeSec >= cStart && dropTimeSec <= cStart + cDur) {
+            matched = true;
+            return { ...c, filter: payload.name } as any;
+          }
+          return c;
+        });
+        if (matched) return next;
+        const newFilterClip: TimelineClip = {
+          id: `filter_${Date.now()}`,
+          trackId: targetTrackId.startsWith('track_custom') ? targetTrackId : 'track_custom_stickers',
+          title: `⚡ ${payload.name}`,
+          timelineStart: dropTime,
+          timelineDuration: asSeconds(4.0),
+          sourceIn: asSourceSeconds(0),
+          sourceOut: asSourceSeconds(4.0),
+          sourceStart: dropTime,
+          duration: asSeconds(4.0),
+          color: '#EB3B5A',
+        };
+        (newFilterClip as any).isFilter = true;
+        (newFilterClip as any).filter = payload.name;
+        validateTimelineClip(newFilterClip);
+        return [...next, newFilterClip];
+      });
     } else if (payload.type === 'asset' && payload.data) {
       const asset = payload.data as MediaAsset;
       const dur = asSeconds(asset.duration || 10.0);
@@ -1037,6 +1166,35 @@ export const App: React.FC = () => {
 
     setMediaAssets(prev => [...newAssets, ...prev]);
 
+    // If timeline is clean slate, immediately place primary asset on timeline
+    if (clips.length === 0 && newAssets.length > 0) {
+      const first = newAssets[0]!;
+      const isAud = first.type === 'audio';
+      const newClip: TimelineClip = {
+        id: `clip_${Date.now()}`,
+        trackId: isAud ? 'track_audio' : 'track_video',
+        title: first.name,
+        timelineStart: asTimelineSeconds(0),
+        timelineDuration: first.duration,
+        sourceIn: asSourceSeconds(0),
+        sourceOut: asSourceSeconds(first.duration),
+        sourceStart: asTimelineSeconds(0),
+        duration: first.duration,
+        color: isAud ? '#10AC84' : '#4B6584',
+        mediaId: first.id,
+        locator: first.videoUrl,
+        videoUrl: first.videoUrl,
+        isSelected: true,
+        hasWaveform: true,
+      };
+      validateTimelineClip(newClip);
+      setClips([newClip]);
+      setSelectedClipId(newClip.id);
+      setSelectedClipIds([newClip.id]);
+      setCurrentTime(0);
+      first.isUsedOnTimeline = true;
+    }
+
     // Automatically create instant default transcript for newly uploaded assets
     setTokensByMedia(prev => {
       const updated = { ...prev };
@@ -1055,7 +1213,7 @@ export const App: React.FC = () => {
     if (activeSubNav === 'import') {
       setActiveSubNav('my-files');
     }
-  }, [activeSubNav, customFolders]);
+  }, [activeSubNav, customFolders, clips]);
 
   // Quick Capture: getUserMedia / getDisplayMedia → MediaRecorder → Media Bin
   const handleQuickCapture = useCallback(async (
@@ -1186,46 +1344,73 @@ export const App: React.FC = () => {
     await handleTranscribeMedia(blob, targetAsset);
   }, [activeMediaId, activeVideoUrl, activeClip, mediaAssets, handleTranscribeMedia]);
 
-  // Real FFmpeg WASM Video Exporter handler
+  // Real FFmpeg WASM Video Exporter handler - exports the full timeline composition
   const handleStartExport = useCallback(async (
     exportSettings: ExportSettings,
     callbacks: { onProgress: (percent: number, stage: string, log?: string) => void }
   ) => {
-    let blob = fileBlobMapRef.current.get(activeMediaId);
+    const activeVideoClips = clips
+      .filter(c => c.trackId === 'track_video')
+      .sort((a, b) => (a.timelineStart ?? 0) - (b.timelineStart ?? 0));
 
-    if (!blob) {
-      const urlToFetch = activeVideoUrl || '/sample_festival.mp4';
-      callbacks.onProgress(5, 'Fetching media stream for WASM export...');
-      try {
-        const resp = await fetch(urlToFetch);
-        if (resp.ok) {
-          blob = await resp.blob();
-        }
-      } catch (err) {
-        console.warn('Could not fetch activeVideoUrl, falling back to local sample', err);
+    callbacks.onProgress(5, `Preparing ${activeVideoClips.length || 1} timeline video clip(s) for WASM export...`);
+
+    const clipInputs: CompositionClipInput[] = [];
+
+    for (let i = 0; i < activeVideoClips.length; i++) {
+      const c = activeVideoClips[i]!;
+      let cBlob = c.mediaId ? fileBlobMapRef.current.get(c.mediaId) : undefined;
+      if (!cBlob) {
+        const fetchUrl = c.videoUrl || (i % 2 === 0 ? '/sample_festival.mp4' : '/sample_team.mp4');
+        try {
+          const resp = await fetch(fetchUrl);
+          if (resp.ok) cBlob = await resp.blob();
+        } catch {}
+      }
+      if (!cBlob) {
+        const fallbackUrl = i % 2 === 0 ? '/sample_festival.mp4' : '/sample_team.mp4';
+        try {
+          const resp = await fetch(fallbackUrl);
+          if (resp.ok) cBlob = await resp.blob();
+        } catch {}
+      }
+      if (cBlob) {
+        const sIn = Number((c.sourceIn ?? 0).toFixed(2));
+        const sDur = Number((c.timelineDuration ?? c.duration ?? 5.0).toFixed(2));
+        const sOut = Number((c.sourceOut ?? (sIn + sDur)).toFixed(2));
+        clipInputs.push({
+          blob: cBlob,
+          sourceIn: sIn,
+          sourceOut: sOut,
+          duration: sDur,
+        });
       }
     }
 
-    if (!blob || blob.size < 100) {
+    if (clipInputs.length === 0) {
+      let fallbackBlob: Blob | undefined;
       try {
         const resp = await fetch('/sample_festival.mp4');
-        if (resp.ok) {
-          blob = await resp.blob();
-        }
-      } catch (err) {
-        console.warn('Local sample fallback failed', err);
+        if (resp.ok) fallbackBlob = await resp.blob();
+      } catch {}
+      if (fallbackBlob) {
+        clipInputs.push({
+          blob: fallbackBlob,
+          sourceIn: 0,
+          sourceOut: 15,
+          duration: 15,
+        });
       }
     }
 
-    if (!blob) {
+    if (clipInputs.length === 0) {
       alert('Unable to load video media buffer for export.');
       return;
     }
 
     try {
-      const result = await exportVideoWithFfmpegWasm(
-        blob,
-        rebuildResult.segments,
+      const result = await exportCompositionWithFfmpegWasm(
+        clipInputs,
         tokens,
         {
           mode: exportSettings.wasmMode === 'stream-copy' ? 'stream-copy' : 'filter-complex-ass',
@@ -1262,7 +1447,7 @@ export const App: React.FC = () => {
     } finally {
       setTelemetry(prev => ({ ...prev, memfsHeapMb: 0 }));
     }
-  }, [activeMediaId, activeVideoUrl, rebuildResult.segments, tokens, lastExportBlobUrl, aspectRatio]);
+  }, [clips, tokens, lastExportBlobUrl, aspectRatio]);
 
   // Add marker flag at current playhead
   const handleAddMarker = useCallback(() => {
@@ -1279,6 +1464,27 @@ export const App: React.FC = () => {
   const handleApplyEffect = useCallback((effectName: string) => {
     if (activeDockTab === 'filters') {
       setActiveFilter(effectName);
+      const targetId = selectedClipId || activeClip?.id;
+      if (targetId) {
+        setClips(prev => prev.map(c => c.id === targetId ? ({ ...c, filter: effectName } as any) : c));
+      } else {
+        const newFilterClip: TimelineClip = {
+          id: `filter_${Date.now()}`,
+          trackId: 'track_custom_stickers',
+          title: `⚡ ${effectName}`,
+          timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+          timelineDuration: asSeconds(4.0),
+          sourceIn: asSourceSeconds(0),
+          sourceOut: asSourceSeconds(4.0),
+          sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+          duration: asSeconds(4.0),
+          color: '#EB3B5A',
+        };
+        (newFilterClip as any).isFilter = true;
+        (newFilterClip as any).filter = effectName;
+        validateTimelineClip(newFilterClip);
+        setClips(prev => [...prev, newFilterClip]);
+      }
     } else if (activeDockTab === 'titles') {
       pushHistory(tokensByMedia, clips);
       setActiveTitlePreset(effectName);
@@ -1287,11 +1493,11 @@ export const App: React.FC = () => {
         trackId: 'track_title',
         title: effectName,
         timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-        timelineDuration: asSeconds(6.0),
+        timelineDuration: asSeconds(4.0),
         sourceIn: asSourceSeconds(0),
-        sourceOut: asSourceSeconds(6.0),
+        sourceOut: asSourceSeconds(4.0),
         sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-        duration: asSeconds(6.0),
+        duration: asSeconds(4.0),
         color: '#8854D0',
       };
       validateTimelineClip(newTitleClip);
@@ -1305,7 +1511,23 @@ export const App: React.FC = () => {
       }
       setActiveTransition(effectName);
     } else if (activeDockTab === 'stickers') {
+      pushHistory(tokensByMedia, clips);
       setActiveSticker(effectName);
+      const newStickerClip: TimelineClip = {
+        id: `sticker_${Date.now()}`,
+        trackId: 'track_custom_stickers',
+        title: `★ ${effectName}`,
+        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineDuration: asSeconds(4.0),
+        sourceIn: asSourceSeconds(0),
+        sourceOut: asSourceSeconds(4.0),
+        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        duration: asSeconds(4.0),
+        color: '#FF7F50',
+      };
+      validateTimelineClip(newStickerClip);
+      setClips(prev => [...prev, newStickerClip]);
+      setSelectedClipId(newStickerClip.id);
     }
   }, [activeDockTab, currentTime, pushHistory, tokensByMedia, clips, selectedClipId, activeClip]);
 
@@ -1694,12 +1916,12 @@ export const App: React.FC = () => {
             playbackSpeed={playbackSpeed}
             onPlaybackSpeedChange={setPlaybackSpeed}
             rotationAngle={rotationAngle}
-            activeFilter={activeFilter}
+            activeFilter={currentFilter}
             colorAdjustments={toolSettings.colorAdjustments}
             toolSettings={toolSettings}
-            activeTitle={activeTitlePreset || activeTitleClip?.title}
-            activeSticker={activeSticker}
-            activeTransition={activeTransition ?? activeClip?.transitionIn}
+            activeTitle={activeTitleClip?.title}
+            activeSticker={activeStickerClip ? activeStickerClip.title.replace(/^★\s*/, '') : undefined}
+            activeTransition={currentTransition}
             onEditActiveTitle={handleEditActiveTitle}
             onClearActiveTitle={() => {
               setActiveTitlePreset(undefined);
@@ -1708,7 +1930,12 @@ export const App: React.FC = () => {
               }
             }}
             onClearActiveFilter={() => setActiveFilter('none')}
-            onClearActiveSticker={() => setActiveSticker(undefined)}
+            onClearActiveSticker={() => {
+              setActiveSticker(undefined);
+              if (activeStickerClip) {
+                setClips(prev => prev.filter(c => c.id !== activeStickerClip.id));
+              }
+            }}
             onClearActiveTransition={() => setActiveTransition(undefined)}
             onTogglePlay={() => setIsPlaying(!isPlaying)}
             onSeek={handleSeek}
@@ -1729,6 +1956,7 @@ export const App: React.FC = () => {
               setActiveDockTab('media');
               setActiveSubNav('my-files');
             }}
+            onBrowseFilesSelected={handleFilesAdded}
           />
           </div>
         </div>

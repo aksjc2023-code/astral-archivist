@@ -57,6 +57,7 @@ export interface VideoPreviewMonitorProps {
   onClearActiveTitle?: () => void;
   onLoadDemoProject?: () => void;
   onImportMedia?: () => void;
+  onBrowseFilesSelected?: (files: File[]) => void;
 }
 
 export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
@@ -100,8 +101,21 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onClearActiveTitle,
   onLoadDemoProject,
   onImportMedia,
+  onBrowseFilesSelected,
 }) => {
   const [transitionAnimKey, setTransitionAnimKey] = useState(0);
+  const browseFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleBrowseFilesClick = () => {
+    browseFileInputRef.current?.click();
+    onImportMedia?.();
+  };
+
+  const handleBrowseFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onBrowseFilesSelected?.(Array.from(e.target.files));
+    }
+  };
 
   // Interactive Movable & Resizable Sticker State
   const [stickerPos, setStickerPos] = useState<{ x: number; y: number }>({ x: 50, y: 50 });
@@ -609,11 +623,21 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 Drag & drop filters, transitions, titles or stickers into the timeline below, import files, or load the sample demo.
               </div>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <input
+                  ref={browseFileInputRef}
+                  id="file-input-preview-browse"
+                  data-testid="file-input-preview-browse"
+                  type="file"
+                  multiple
+                  accept="video/*,audio/*,image/*"
+                  style={{ display: 'none' }}
+                  onChange={handleBrowseFilesChange}
+                />
                 <button
                   type="button"
                   id="btn-empty-import"
                   data-testid="btn-empty-import"
-                  onClick={onImportMedia}
+                  onClick={handleBrowseFilesClick}
                   style={{
                     backgroundColor: '#168BFF',
                     color: '#FFFFFF',

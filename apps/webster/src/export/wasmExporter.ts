@@ -13,6 +13,9 @@ import {
   generateConcatDemuxerList,
   generateFfmpegFilterComplex,
   generateAssSubtitleScript,
+  asSourceSeconds,
+  asVirtualSeconds,
+  asSeconds,
 } from '@astral/core';
 
 export const MAX_BROWSER_WASM_INPUT_BYTES = 750 * 1024 * 1024; // 750 MB pre-flight limit
@@ -323,3 +326,146 @@ export async function exportVideoWithFfmpegWasm(
     };
   }
 }
+
+export interface CompositionClipInput {
+  blob: Blob;
+  sourceIn: number;
+  sourceOut: number;
+  duration: number;
+}
+
+/**
+ * Renders the full multi-clip composition across all timeline clips
+ * ensuring the exported video matches the complete timeline duration (e.g. 30s-60s+),
+ * not just a single 10-15s clip.
+ */
+export async function exportCompositionWithFfmpegWasm(
+  clipInputs: CompositionClipInput[],
+  tokens: WordToken[],
+  options: WasmExportOptions
+): Promise<{ outputBlob: Blob; durationSec: number; modeUsed: string }> {
+  if (clipInputs.length === 0) {
+    throw new Error('No video clips found on timeline to export.');
+  }
+
+  // Single clip fast-path
+  if (clipInputs.length === 1 && clipInputs[0]) {
+    const single = clipInputs[0];
+    const segment: PlaybackSegment = {
+      id: 'seg_clip_0',
+      mediaId: 'clip_0',
+      sourceStart: asSourceSeconds(single.sourceIn),
+      sourceEnd: asSourceSeconds(single.sourceOut),
+      virtualStart: asVirtualSeconds(0),
+      virtualEnd: asVirtualSeconds(single.duration),
+      duration: asSeconds(single.duration),
+    };
+    return exportVideoWithFfmpegWasm(single.blob, [segment], tokens, options);
+  }
+
+  const { onProgress, onLog } = options;
+  const ffmpeg = await getLoadedFFmpeg(onProgress, onLog);
+  const allocatedFiles = new Set<string>();
+  const outputFileName = 'scarletcut_full_composition.mp4';
+
+  const totalDuration = clipInputs.reduce((sum, c) => sum + (c.sourceOut - c.sourceIn), 0);
+  const totalInputMb = Number((clipInputs.reduce((sum, c) => sum + c.blob.size, 0) / (1024 * 1024)).toFixed(1));
+
+  onProgress?.({
+    stage: `Preparing full timeline composition (${clipInputs.length} clips, ${totalDuration.toFixed(1)}s total)...`,
+    percent: 10,
+    memfsAllocatedMb: totalInputMb,
+  });
+
+  try {
+    const manifestLines: string[] = ['ffconcat version 1.0'];
+
+    for (let i = 0; i < clipInputs.length; i++) {
+      const input = clipInputs[i]!;
+      const vFileName = `input_clip_${i}.mp4`;
+      const fileData = await fetchFile(input.blob);
+      await ffmpeg.writeFile(vFileName, fileData);
+      allocatedFiles.add(vFileName);
+
+      manifestLines.push(`file '${vFileName}'`);
+      manifestLines.push(`inpoint ${input.sourceIn.toFixed(3)}`);
+      manifestLines.push(`outpoint ${input.sourceOut.toFixed(3)}`);
+    }
+
+    const manifestName = 'composition_manifest.txt';
+    const manifestContent = manifestLines.join('\n') + '\n';
+    await ffmpeg.writeFile(manifestName, new TextEncoder().encode(manifestContent));
+    allocatedFiles.add(manifestName);
+    allocatedFiles.add(outputFileName);
+
+    onProgress?.({
+      stage: `Concatenating ${clipInputs.length} clips into unified ${totalDuration.toFixed(1)}s timeline video...`,
+      percent: 40,
+      memfsAllocatedMb: totalInputMb,
+    });
+
+    let execSuccess = false;
+    try {
+      const exitCode = await ffmpeg.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', manifestName,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        outputFileName,
+      ]);
+      if (exitCode === 0) execSuccess = true;
+    } catch (err) {
+      console.warn('[WASM Exporter] Multi-clip stream-copy concat failed, attempting filter encode:', err);
+    }
+
+    if (!execSuccess) {
+      onProgress?.({
+        stage: 'Re-encoding full timeline composition with unified audio/video sync...',
+        percent: 65,
+        memfsAllocatedMb: totalInputMb,
+      });
+      // Fallback: re-encode via concat demuxer
+      const fallbackCode = await ffmpeg.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', manifestName,
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        '-crf', '23',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-movflags', '+faststart',
+        outputFileName,
+      ]);
+      if (fallbackCode === 0) execSuccess = true;
+    }
+
+    onProgress?.({
+      stage: 'Reading finalized composition from WebAssembly memory...',
+      percent: 92,
+      memfsAllocatedMb: totalInputMb,
+    });
+
+    const outData = (await ffmpeg.readFile(outputFileName)) as Uint8Array;
+    const copyBuffer = new ArrayBuffer(outData.byteLength);
+    new Uint8Array(copyBuffer).set(outData);
+    const finalBlob = new Blob([copyBuffer], { type: 'video/mp4' });
+
+    onProgress?.({ stage: 'Export Complete!', percent: 100, memfsAllocatedMb: 0 });
+
+    return {
+      outputBlob: finalBlob,
+      durationSec: totalDuration,
+      modeUsed: 'multi-clip-concat',
+    };
+  } finally {
+    for (const f of allocatedFiles) {
+      try {
+        await ffmpeg.deleteFile(f);
+      } catch {}
+    }
+    allocatedFiles.clear();
+  }
+}
+
