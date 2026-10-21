@@ -6,6 +6,8 @@ export interface EffectsGridViewProps {
   onApplyEffect?: (effectName: string) => void;
 }
 
+type EffectItem = { name: string; color: string; sub: string; category: string };
+
 export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyEffect }) => {
   const [activeCategory, setActiveCategory] = useState('All');
   const [favorites, setFavorites] = useState<Set<string>>(new Set(['Retro Film', 'Cross Dissolve', 'Minimal Modern']));
@@ -16,54 +18,75 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
       count: '172 filters',
       categories: ['All', 'Favorites', 'Featured', 'Cinematic', 'Retro', 'Glitch', 'Blur'],
       items: [
-        { name: 'Retro Film', color: '#B53471', sub: 'Warm 35mm grain' },
-        { name: 'Cyberpunk Neon', color: '#168BFF', sub: 'High contrast cyan' },
-        { name: 'Golden Sunset', color: '#FFA502', sub: 'Amber highlights' },
-        { name: 'Moody B&W', color: '#747D8C', sub: 'Silver haloid' },
-        { name: 'VHS Distortion', color: '#8854D0', sub: 'Magnetic tape tracking' },
-        { name: 'Teal & Orange', color: '#00D2D3', sub: 'Blockbuster grade' },
-      ],
+        { name: 'Retro Film', color: '#B53471', sub: 'Warm 35mm grain', category: 'Retro' },
+        { name: 'Cyberpunk Neon', color: '#168BFF', sub: 'High contrast cyan', category: 'Glitch' },
+        { name: 'Golden Sunset', color: '#FFA502', sub: 'Amber highlights', category: 'Cinematic' },
+        { name: 'Moody B&W', color: '#747D8C', sub: 'Silver haloid', category: 'Cinematic' },
+        { name: 'VHS Distortion', color: '#8854D0', sub: 'Magnetic tape tracking', category: 'Retro' },
+        { name: 'Teal & Orange', color: '#00D2D3', sub: 'Blockbuster grade', category: 'Cinematic' },
+        { name: 'Soft Bloom', color: '#A29BFE', sub: 'Dreamy haze', category: 'Blur' },
+        { name: 'Featured Punch', color: '#FF6B81', sub: 'Curated highlight grade', category: 'Featured' },
+        { name: 'RGB Split', color: '#FF4757', sub: 'Chromatic aberration', category: 'Glitch' },
+        { name: 'Noir Fade', color: '#2F3542', sub: 'Lifted blacks', category: 'Cinematic' },
+        { name: 'Polaroid Warm', color: '#E17055', sub: 'Instant film look', category: 'Retro' },
+        { name: 'Motion Blur Soft', color: '#70A1FF', sub: 'Directional smear', category: 'Blur' },
+      ] as EffectItem[],
     },
     transitions: {
       title: 'Transitions',
       count: '113 transitions',
       categories: ['All', 'Favorites', 'Featured', 'Wipe', 'Zoom', 'Geometric', 'Ripple'],
       items: [
-        { name: 'Cross Dissolve', color: '#3867D6', sub: 'Smooth overlap' },
-        { name: 'Whip Pan Right', color: '#2ED573', sub: 'Fast kinetic leap' },
-        { name: 'Glitch Flash', color: '#FF4757', sub: 'RGB offset frame' },
-        { name: 'Zoom Spin In', color: '#8854D0', sub: 'Dynamic barrel roll' },
-        { name: 'Iris Circle', color: '#FFA502', sub: 'Classic film closure' },
-        { name: 'Split Slide', color: '#168BFF', sub: 'Horizontal parting' },
-      ],
+        { name: 'Cross Dissolve', color: '#3867D6', sub: 'Smooth overlap', category: 'Featured' },
+        { name: 'Whip Pan Right', color: '#2ED573', sub: 'Fast kinetic leap', category: 'Wipe' },
+        { name: 'Glitch Flash', color: '#FF4757', sub: 'RGB offset frame', category: 'Featured' },
+        { name: 'Zoom Spin In', color: '#8854D0', sub: 'Dynamic barrel roll', category: 'Zoom' },
+        { name: 'Iris Circle', color: '#FFA502', sub: 'Classic film closure', category: 'Geometric' },
+        { name: 'Split Slide', color: '#168BFF', sub: 'Horizontal parting', category: 'Wipe' },
+        { name: 'Ripple Push', color: '#00CEC9', sub: 'Wave distortion', category: 'Ripple' },
+        { name: 'Hard Cut Flash', color: '#FD79A8', sub: 'White flash cut', category: 'Featured' },
+        { name: 'Cube Spin', color: '#6C5CE7', sub: '3D geometric flip', category: 'Geometric' },
+        { name: 'Zoom Blur Out', color: '#0984E3', sub: 'Radial smear exit', category: 'Zoom' },
+      ] as EffectItem[],
     },
     titles: {
       title: 'Titles & Captions',
       count: '132 titles',
       categories: ['All', 'Favorites', 'Minimal', 'Cinematic', 'Social Media', 'Subtitles'],
       items: [
-        { name: 'Minimal Modern', color: '#8854D0', sub: 'Clean sans-serif lower' },
-        { name: 'Typewriter Pop', color: '#168BFF', sub: 'Character by character' },
-        { name: 'Karaoke Glow', color: '#2ED573', sub: 'Word sync highlight' },
-        { name: 'Cinematic Trailer', color: '#FFA502', sub: 'Tracked serif intro' },
-        { name: 'Social Subscribe', color: '#FF4757', sub: 'Animated pill callout' },
-        { name: 'Vlog Chapter Marker', color: '#00D2D3', sub: 'Timecode stamp badge' },
-      ],
+        { name: 'Minimal Modern', color: '#8854D0', sub: 'Clean sans-serif lower', category: 'Minimal' },
+        { name: 'Typewriter Pop', color: '#168BFF', sub: 'Character by character', category: 'Minimal' },
+        { name: 'Karaoke Glow', color: '#2ED573', sub: 'Word sync highlight', category: 'Subtitles' },
+        { name: 'Cinematic Trailer', color: '#FFA502', sub: 'Tracked serif intro', category: 'Cinematic' },
+        { name: 'Social Subscribe', color: '#FF4757', sub: 'Animated pill callout', category: 'Social Media' },
+        { name: 'Vlog Chapter Marker', color: '#00D2D3', sub: 'Timecode stamp badge', category: 'Social Media' },
+        { name: 'Lower Third News', color: '#74B9FF', sub: 'Broadcast caption bar', category: 'Subtitles' },
+        { name: 'Epic Serif Open', color: '#FDCB6E', sub: 'Trailer title card', category: 'Cinematic' },
+      ] as EffectItem[],
     },
     stickers: {
       title: 'Stickers & Overlays',
       count: '120 stickers',
       categories: ['All', 'Favorites', 'Emojis', 'Arrows', 'Shapes', 'Social'],
       items: [
-        { name: 'Pointing Arrow', color: '#FF4757', sub: 'Red accent locator' },
-        { name: 'Like Button Pulse', color: '#168BFF', sub: 'Thumbs up motion' },
-        { name: 'Sparkle Burst', color: '#FFA502', sub: 'Gold starlight flash' },
-        { name: 'Heart React', color: '#EB3B5A', sub: 'Animated heartbeat' },
-        { name: 'Fire Flame', color: '#FF7F50', sub: 'Burning intensity' },
-        { name: 'Checkmark Circle', color: '#2ED573', sub: 'Green verified badge' },
-      ],
+        { name: 'Pointing Arrow', color: '#FF4757', sub: 'Red accent locator', category: 'Arrows' },
+        { name: 'Like Button Pulse', color: '#168BFF', sub: 'Thumbs up motion', category: 'Social' },
+        { name: 'Sparkle Burst', color: '#FFA502', sub: 'Gold starlight flash', category: 'Emojis' },
+        { name: 'Heart React', color: '#EB3B5A', sub: 'Animated heartbeat', category: 'Emojis' },
+        { name: 'Fire Flame', color: '#FF7F50', sub: 'Burning intensity', category: 'Emojis' },
+        { name: 'Checkmark Circle', color: '#2ED573', sub: 'Green verified badge', category: 'Shapes' },
+        { name: 'Subscribe Bell', color: '#FFD32A', sub: 'Notification callout', category: 'Social' },
+        { name: 'Circle Outline', color: '#70A1FF', sub: 'Highlight ring', category: 'Shapes' },
+        { name: 'Curved Arrow', color: '#A29BFE', sub: 'Soft callout path', category: 'Arrows' },
+      ] as EffectItem[],
     },
   }[type];
+
+  const filteredItems = config.items.filter(item => {
+    if (activeCategory === 'All') return true;
+    if (activeCategory === 'Favorites') return favorites.has(item.name);
+    return item.category === activeCategory;
+  });
 
   const toggleFavorite = (name: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -126,18 +149,36 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
 
       {/* Grid Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
-        {config.items.map(item => {
+        {filteredItems.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', fontSize: '12px', color: '#636E7B', padding: '24px 0', textAlign: 'center' }}>
+            No presets in this category yet.
+          </div>
+        )}
+        {filteredItems.map(item => {
           const isFav = favorites.has(item.name);
           return (
             <div
               key={item.name}
+              draggable={true}
+              onDragStart={e => {
+                const payload = JSON.stringify({
+                  type,
+                  name: item.name,
+                  color: item.color,
+                  sub: item.sub,
+                  category: item.category,
+                });
+                e.dataTransfer.setData('application/scarlet-item', payload);
+                e.dataTransfer.setData('text/plain', item.name);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
               onClick={() => onApplyEffect?.(item.name)}
               style={{
                 backgroundColor: '#22262E',
                 borderRadius: '12px',
                 border: '1px solid #2B303A',
                 overflow: 'hidden',
-                cursor: 'pointer',
+                cursor: 'grab',
                 transition: 'all 0.15s ease',
               }}
               onMouseEnter={e => {

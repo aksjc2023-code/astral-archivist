@@ -6,19 +6,26 @@ export interface MediaGridViewProps {
   assets: MediaAsset[];
   onSelectAsset: (asset: MediaAsset) => void;
   onAddToTimeline: (asset: MediaAsset) => void;
+  /** External category filter from sub-nav (e.g. Landscape, Nature, Sample video) */
+  categoryFilter?: string | null;
+  title?: string;
 }
 
 export const MediaGridView: React.FC<MediaGridViewProps> = ({
   assets,
   onSelectAsset,
   onAddToTimeline,
+  categoryFilter = null,
+  title = 'My Files',
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCategory, setFilterCategory] = useState<string>('all');
 
+  const effectiveCategory = categoryFilter ?? (filterCategory === 'all' ? null : filterCategory);
+
   const filtered = assets.filter(a => {
     const matchesSearch = a.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = filterCategory === 'all' || a.category === filterCategory;
+    const matchesCategory = !effectiveCategory || a.category === effectiveCategory;
     return matchesSearch && matchesCategory;
   });
 
@@ -44,7 +51,7 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <h2 style={{ fontSize: '18px', fontWeight: 500, color: '#FFFFFF', margin: 0 }}>
-            My Files
+            {title}
           </h2>
           <span style={{ fontSize: '12px', color: '#636E7B' }}>
             ({filtered.length} files)
@@ -119,13 +126,20 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
             id={`card-media-${asset.id}`}
             data-testid="card-media"
             data-asset-name={asset.name}
+            draggable={true}
+            onDragStart={e => {
+              e.dataTransfer.setData('application/scarlet-asset', JSON.stringify(asset));
+              e.dataTransfer.setData('application/scarlet-item', JSON.stringify({ type: 'asset', data: asset, name: asset.name }));
+              e.dataTransfer.setData('text/plain', asset.name);
+              e.dataTransfer.effectAllowed = 'copy';
+            }}
             onClick={() => onSelectAsset(asset)}
             onDoubleClick={() => onAddToTimeline(asset)}
             style={{
               backgroundColor: '#22262E',
               borderRadius: '12px',
               overflow: 'hidden',
-              cursor: 'pointer',
+              cursor: 'grab',
               transition: 'transform 0.15s ease, box-shadow 0.15s ease',
               border: '1px solid #2B303A',
             }}

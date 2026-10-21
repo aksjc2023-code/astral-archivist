@@ -23,6 +23,7 @@ export interface MultiTrackTimelineProps {
   markers: MarkerFlag[];
   scale: number; // Pixels per second multiplier
   selectedClipId?: string;
+  selectedClipIds?: string[];
   trackStates?: Record<string, TrackControlState>;
   onToggleTrackHidden?: (trackId: string) => void;
   onToggleTrackLocked?: (trackId: string) => void;
@@ -31,11 +32,15 @@ export interface MultiTrackTimelineProps {
   onClipVolumeChange?: (clipId: string, volume: number) => void;
   onSeek: (time: number) => void;
   onSelectClip?: (clipId: string) => void;
+  onSelectClips?: (clipIds: string[]) => void;
+  onDropItem?: (payload: { type: string; name: string; [key: string]: any }, dropTimeSec: number, trackId: string) => void;
+  onBatchMoveClips?: (clipIds: string[], deltaSec: number) => void;
   onTrimClip?: (clipId: string, side: 'left' | 'right', deltaSec: number) => void;
   onMoveClip?: (clipId: string, newStartSec: number) => void;
   onClipMoveEnd?: (clipId: string) => void;
   onAddTrack?: () => void;
   onDeleteMarker?: (markerId: string) => void;
+  onEditClipTitle?: (clipId: string, newTitle: string) => void;
 }
 
 const getClipStart = (c: TimelineClip): number => c.timelineStart ?? c.sourceStart ?? 0;
@@ -49,6 +54,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   markers,
   scale = 1.0,
   selectedClipId,
+  selectedClipIds,
   trackStates,
   onToggleTrackHidden,
   onToggleTrackLocked,
@@ -57,15 +63,27 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   onClipVolumeChange,
   onSeek,
   onSelectClip,
+  onSelectClips,
+  onDropItem,
+  onBatchMoveClips,
   onTrimClip,
   onMoveClip,
   onClipMoveEnd,
   onAddTrack,
   onDeleteMarker,
+  onEditClipTitle,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+
+  // Marquee Drag Selection State
+  const [isMarqueeActive, setIsMarqueeActive] = useState(false);
+  const [marqueeStart, setMarqueeStart] = useState<{ x: number; y: number } | null>(null);
+  const [marqueeCurrent, setMarqueeCurrent] = useState<{ x: number; y: number } | null>(null);
+
+  // Drag & Drop Timeline Indicator State
+  const [dropIndicator, setDropIndicator] = useState<{ x: number; timeSec: number; trackId: string; trackName: string } | null>(null);
 
   // Track control state fallback if not controlled by parent
   const [internalTrackStates, setInternalTrackStates] = useState<Record<string, TrackControlState>>({});
@@ -159,7 +177,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     window.addEventListener('mouseup', handleMouseUp);
   };
 
-  // Horizontal clip dragging / timeline shift coordinator
+  // Horizontal clip dragging / timeline shift coordinator (supports batch moving selected clips)
   const handleClipMouseDown = (
     e: React.MouseEvent,
     clipId: string,
@@ -170,10 +188,31 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     if (activeTrackStates[trackId]?.locked) return;
 
     e.stopPropagation();
-    onSelectClip?.(clipId);
+
+    // Multi-select toggle with Shift+Click
+    if (e.shiftKey) {
+      const currentSelected = selectedClipIds ?? (selectedClipId ? [selectedClipId] : []);
+      const next = currentSelected.includes(clipId)
+        ? currentSelected.filter(id => id !== clipId)
+        : [...currentSelected, clipId];
+      onSelectClips?.(next);
+      if (next.length > 0) onSelectClip?.(next[0]!);
+      return;
+    }
+
+    const isAlreadySelected = selectedClipIds ? selectedClipIds.includes(clipId) : clipId === selectedClipId;
+    if (!isAlreadySelected) {
+      onSelectClips?.([clipId]);
+      onSelectClip?.(clipId);
+    }
 
     const startX = e.clientX;
     let hasDragged = false;
+
+    // Snapshot initial positions of all currently selected clips for batch dragging
+    const activeSelectedIds = (selectedClipIds && selectedClipIds.includes(clipId))
+      ? selectedClipIds
+      : [clipId];
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaPx = moveEvent.clientX - startX;
@@ -182,8 +221,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       }
       if (hasDragged) {
         const deltaSec = deltaPx / pxPerSec;
-        const newStart = Math.max(0, Number((initialStart + deltaSec).toFixed(2)));
-        onMoveClip?.(clipId, newStart);
+        if (activeSelectedIds.length > 1 && onBatchMoveClips) {
+          onBatchMoveClips(activeSelectedIds, deltaSec);
+        } else {
+          const newStart = Math.max(0, Number((initialStart + deltaSec).toFixed(2)));
+          onMoveClip?.(clipId, newStart);
+        }
       }
     };
 
@@ -197,6 +240,157 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Discover dynamic tracks early for marquee coordinate calculation
+  const customTrackIds = Array.from(
+    new Set(
+      clips
+        .map(c => c.trackId)
+        .filter(id => !['track_title', 'track_video', 'track_audio'].includes(id))
+    )
+  ).sort();
+
+  // Marquee Drag-Selection Mouse Coordinator
+  const handleTracksMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('[data-testid^="timeline-clip-"]') || (e.target as HTMLElement).closest('button')) {
+      return;
+    }
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const x = e.clientX - rect.left + container.scrollLeft;
+    const y = e.clientY - rect.top + container.scrollTop;
+
+    setIsMarqueeActive(true);
+    setMarqueeStart({ x, y });
+    setMarqueeCurrent({ x, y });
+    if (!e.shiftKey) {
+      onSelectClips?.([]);
+    }
+  };
+
+  useEffect(() => {
+    if (!isMarqueeActive || !marqueeStart) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left + container.scrollLeft;
+      const y = e.clientY - rect.top + container.scrollTop;
+      setMarqueeCurrent({ x, y });
+
+      const minX = Math.min(marqueeStart.x, x);
+      const maxX = Math.max(marqueeStart.x, x);
+      const minY = Math.min(marqueeStart.y, y);
+      const maxY = Math.max(marqueeStart.y, y);
+
+      const intersectingIds: string[] = [];
+      clips.forEach(clip => {
+        const startSec = getClipStart(clip);
+        const durSec = getClipDuration(clip);
+        const clipLeft = startSec * pxPerSec;
+        const clipRight = clipLeft + durSec * pxPerSec;
+
+        let trackTop = 64;
+        let trackBottom = 134;
+        if (clip.trackId === 'track_title') {
+          trackTop = 28;
+          trackBottom = 64;
+        } else if (clip.trackId === 'track_video') {
+          trackTop = 64;
+          trackBottom = 134;
+        } else if (clip.trackId === 'track_audio') {
+          trackTop = 134;
+          trackBottom = 178;
+        } else {
+          const customIdx = customTrackIds.indexOf(clip.trackId);
+          trackTop = 178 + (customIdx >= 0 ? customIdx : 0) * 40;
+          trackBottom = trackTop + 40;
+        }
+
+        if (clipLeft < maxX && clipRight > minX && trackTop < maxY && trackBottom > minY) {
+          intersectingIds.push(clip.id);
+        }
+      });
+
+      if (intersectingIds.length > 0) {
+        onSelectClips?.(intersectingIds);
+        if (intersectingIds[0]) onSelectClip?.(intersectingIds[0]);
+      }
+    };
+
+    const handleMouseUp = () => {
+      setIsMarqueeActive(false);
+      setMarqueeStart(null);
+      setMarqueeCurrent(null);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isMarqueeActive, marqueeStart, clips, pxPerSec, customTrackIds, onSelectClips, onSelectClip]);
+
+  // Drag & Drop from Library / Effects onto Timeline
+  const resolveTrackFromClientY = (clientY: number) => {
+    const container = scrollContainerRef.current;
+    if (!container) return { trackId: 'track_video', trackName: 'Main Video Track' };
+    const rect = container.getBoundingClientRect();
+    const y = clientY - rect.top;
+    if (y < 64) return { trackId: 'track_title', trackName: 'Titles Track' };
+    if (y < 134) return { trackId: 'track_video', trackName: 'Main Video Track' };
+    if (y < 178) return { trackId: 'track_audio', trackName: 'Audio Track' };
+    return { trackId: 'track_custom_stickers', trackName: 'Overlays & Stickers Track' };
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    const clickTime = calculateTimeFromClientX(e.clientX);
+    const { trackId, trackName } = resolveTrackFromClientY(e.clientY);
+    setDropIndicator({
+      x: clickTime * pxPerSec,
+      timeSec: clickTime,
+      trackId,
+      trackName,
+    });
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setDropIndicator(null);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const clickTime = calculateTimeFromClientX(e.clientX);
+    const { trackId } = resolveTrackFromClientY(e.clientY);
+    setDropIndicator(null);
+
+    let rawData = e.dataTransfer.getData('application/scarlet-item');
+    if (!rawData) {
+      rawData = e.dataTransfer.getData('application/scarlet-asset');
+    }
+    if (!rawData) {
+      const text = e.dataTransfer.getData('text/plain');
+      if (text) {
+        rawData = JSON.stringify({ type: 'titles', name: text });
+      }
+    }
+
+    if (rawData) {
+      try {
+        const parsed = JSON.parse(rawData);
+        onDropItem?.(parsed, clickTime, trackId);
+      } catch (err) {
+        console.warn('[Timeline] Failed to parse dropped item', err);
+      }
+    }
   };
 
   useEffect(() => {
@@ -227,15 +421,6 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const titleClips = clips.filter(c => c.trackId === 'track_title');
   const videoClips = clips.filter(c => c.trackId === 'track_video');
   const audioClips = clips.filter(c => c.trackId === 'track_audio');
-
-  // Discover and render all dynamic/custom tracks added via Add Track or plugins
-  const customTrackIds = Array.from(
-    new Set(
-      clips
-        .map(c => c.trackId)
-        .filter(id => !['track_title', 'track_video', 'track_audio'].includes(id))
-    )
-  ).sort();
 
   return (
     <div
@@ -627,6 +812,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       {/* Scrollable Tracks Canvas Well */}
       <div
         ref={scrollContainerRef}
+        onMouseDown={handleTracksMouseDown}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
         style={{
           flex: 1,
           overflowX: 'auto',
@@ -636,6 +825,59 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         }}
       >
         <div style={{ width: `${totalTimelineWidthPx}px`, height: '100%', position: 'relative' }}>
+          {/* Active Magnetic Drop Indicator */}
+          {dropIndicator && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${dropIndicator.x}px`,
+                top: 0,
+                bottom: 0,
+                width: '2px',
+                backgroundColor: '#00F0FF',
+                zIndex: 40,
+                pointerEvents: 'none',
+                boxShadow: '0 0 12px #00F0FF',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '32px',
+                  left: '6px',
+                  backgroundColor: '#00F0FF',
+                  color: '#0A0C10',
+                  padding: '3px 8px',
+                  borderRadius: '4px',
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  whiteSpace: 'nowrap',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                }}
+              >
+                + Drop onto {dropIndicator.trackName} at {formatTimecode(dropIndicator.timeSec).main}
+              </div>
+            </div>
+          )}
+
+          {/* Marquee Selection Rectangle */}
+          {isMarqueeActive && marqueeStart && marqueeCurrent && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${Math.min(marqueeStart.x, marqueeCurrent.x)}px`,
+                top: `${Math.min(marqueeStart.y, marqueeCurrent.y)}px`,
+                width: `${Math.abs(marqueeCurrent.x - marqueeStart.x)}px`,
+                height: `${Math.abs(marqueeCurrent.y - marqueeStart.y)}px`,
+                border: '1px solid #00F0FF',
+                backgroundColor: 'rgba(0, 240, 255, 0.15)',
+                borderRadius: '4px',
+                pointerEvents: 'none',
+                zIndex: 50,
+                boxShadow: '0 0 12px rgba(0, 240, 255, 0.35)',
+              }}
+            />
+          )}
           {/* Timeline Timecode Ruler (Page 1) */}
           <div
             ref={rulerRef}
@@ -758,7 +1000,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             }}
           >
             {titleClips.map(clip => {
-              const isSelected = clip.id === selectedClipId;
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackHidden = activeTrackStates['track_title']?.hidden;
@@ -766,6 +1008,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               return (
                 <div
                   key={clip.id}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
                   onClick={e => {
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
@@ -773,9 +1017,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_title')}
                   onDoubleClick={e => {
                     e.stopPropagation();
-                    onSeek(clipStart);
+                    const newText = prompt('Edit Title & Caption text:', clip.title);
+                    if (newText !== null && newText.trim()) {
+                      onEditClipTitle?.(clip.id, newText.trim());
+                    }
                   }}
-                  title={`[Title] ${clip.title} (Drag to shift, Double-click to seek)`}
+                  title={`[Title] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim/extend, Double-click to rename`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -783,7 +1030,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     height: '24px',
                     top: '6px',
                     backgroundColor: '#8854D0',
-                    border: isSelected ? '2px solid #FFD32A' : '1px solid #9B63E6',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #9B63E6',
                     borderRadius: '6px',
                     display: 'flex',
                     alignItems: 'center',
@@ -791,7 +1038,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     color: '#FFFFFF',
                     fontSize: '11px',
                     fontWeight: 500,
-                    boxShadow: isSelected ? '0 0 10px rgba(255, 211, 42, 0.5)' : '0 2px 6px rgba(136, 84, 208, 0.3)',
+                    boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : '0 2px 6px rgba(136, 84, 208, 0.3)',
                     overflow: 'hidden',
                     whiteSpace: 'nowrap',
                     cursor: isTrackLocked ? 'not-allowed' : 'grab',
@@ -800,7 +1047,54 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  <span>{clip.title}</span>
+                  {/* Trim In/Out Yellow Handles when Selected (Page 1 & Movavi Timeline feature) */}
+                  {isSelected && (
+                    <>
+                      <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend title in-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_title')}
+                        style={{
+                          position: 'absolute',
+                          left: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
+                        }}
+                      />
+                      <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend title out-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_title')}
+                        style={{
+                          position: 'absolute',
+                          right: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
+                        }}
+                      />
+                    </>
+                  )}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected ? '4px' : '0' }}>
+                    {clip.title}
+                  </span>
                 </div>
               );
             })}
@@ -816,7 +1110,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             }}
           >
             {videoClips.map((clip, index) => {
-              const isSelected = clip.id === selectedClipId || clip.isSelected;
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : (clip.id === selectedClipId || clip.isSelected);
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackHidden = activeTrackStates['track_video']?.hidden;
@@ -844,7 +1138,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     top: '5px',
                     backgroundColor: '#2A3548',
                     borderRadius: '8px',
-                    border: isSelected ? '2px solid #FFD32A' : '1px solid #3B4F6B',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #3B4F6B',
                     overflow: 'hidden',
                     display: 'flex',
                     flexDirection: 'column',
@@ -852,7 +1146,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     cursor: isTrackLocked ? 'not-allowed' : 'grab',
                     opacity: isTrackHidden ? 0.3 : 1,
                     filter: isTrackHidden ? 'grayscale(80%)' : 'none',
-                    boxShadow: isSelected ? '0 0 14px rgba(255, 211, 42, 0.45)' : 'none',
+                    boxShadow: isSelected ? '0 0 16px rgba(0, 240, 255, 0.75)' : 'none',
                     transition: 'border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease',
                   }}
                 >
@@ -1007,7 +1301,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             }}
           >
             {audioClips.map(clip => {
-              const isSelected = clip.id === selectedClipId;
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackMuted = activeTrackStates['track_audio']?.muted;
@@ -1015,6 +1309,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               return (
                 <div
                   key={clip.id}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
                   onClick={e => {
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
@@ -1024,7 +1320,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSeek(clipStart);
                   }}
-                  title={`[Audio] ${clip.title} - Drag to shift, Double-click to seek`}
+                  title={`[Audio] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -1032,14 +1328,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     height: '32px',
                     top: '6px',
                     backgroundColor: '#10AC84',
-                    border: isSelected ? '2px solid #FFD32A' : 'none',
+                    border: isSelected ? '2px solid #00F0FF' : 'none',
                     borderRadius: '6px',
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     padding: '3px 8px',
                     color: '#FFFFFF',
-                    boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : '0 2px 8px rgba(16, 172, 132, 0.3)',
+                    boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : '0 2px 8px rgba(16, 172, 132, 0.3)',
                     overflow: 'hidden',
                     cursor: isTrackLocked ? 'not-allowed' : 'grab',
                     opacity: isTrackMuted ? 0.35 : 1,
@@ -1047,6 +1343,51 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'all 0.12s ease',
                   }}
                 >
+                  {/* Trim In/Out Yellow Handles when Selected */}
+                  {isSelected && (
+                    <>
+                      <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag to trim audio in-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_audio')}
+                        style={{
+                          position: 'absolute',
+                          left: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
+                        }}
+                      />
+                      <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag to trim audio out-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_audio')}
+                        style={{
+                          position: 'absolute',
+                          right: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
+                        }}
+                      />
+                    </>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
                     <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {clip.title}
@@ -1111,7 +1452,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                 }}
               >
                 {trackClips.map(clip => {
-                  const isSelected = clip.id === selectedClipId;
+                  const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
                   const clipStart = getClipStart(clip);
                   const clipDur = getClipDuration(clip);
                   return (
@@ -1134,13 +1475,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         height: '30px',
                         top: '5px',
                         backgroundColor: clip.color || '#FFA502',
-                        border: isSelected ? '2px solid #FFD32A' : 'none',
+                        border: isSelected ? '2px solid #00F0FF' : 'none',
                         borderRadius: '6px',
                         display: 'flex',
                         alignItems: 'center',
                         padding: '0 8px',
                         color: '#FFFFFF',
-                        boxShadow: isSelected ? '0 0 12px rgba(255, 211, 42, 0.45)' : 'none',
+                        boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : 'none',
                         overflow: 'hidden',
                         cursor: isTrackLocked ? 'not-allowed' : 'grab',
                         opacity: isTrackHidden ? 0.3 : 1,

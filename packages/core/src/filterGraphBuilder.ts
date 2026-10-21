@@ -3,14 +3,15 @@
  * Zero-DOM dependency (compatible with lib: ["ES2022"])
  */
 
-import { PlaybackSegment, WordToken } from './types';
+import { AspectRatio, PlaybackSegment, WordToken, asSourceSeconds } from './types';
+import { sourceToVirtualTime } from './timelineEngine';
 
 export interface AssScriptOptions {
   title?: string;
   fontSize?: number;
   fontName?: string;
   primaryColorHex?: string;  // e.g. '&H00FFFFFF' (AABBGGRR in ASS)
-  outlineColorHex?: string;  // e.g. '&H00000000'
+  outlineColorHex?: string;  // e.g. '&H00101010'
   shadowColorHex?: string;   // e.g. '&H80000000'
   playResX?: number;
   playResY?: number;
@@ -40,10 +41,15 @@ export function formatAssTimestamp(seconds: number): string {
 /**
  * Generates standard Advanced SubStation Alpha (ASS v4.00+) subtitle script
  * from active (non-deleted) WordTokens.
+ *
+ * When `segments` are provided, token source timestamps are projected through
+ * the bijective virtual timeline mapping Phi(tau) so subtitles stay in sync
+ * after ripple cuts.
  */
 export function generateAssSubtitleScript(
   tokens: WordToken[],
-  options: AssScriptOptions = {}
+  options: AssScriptOptions = {},
+  segments?: readonly PlaybackSegment[]
 ): string {
   const {
     title = 'ScarletCut Dynamic Subtitles',
@@ -57,7 +63,6 @@ export function generateAssSubtitleScript(
     wordsPerSentence = 6,
   } = options;
 
-  // Filter out deleted tokens, pause markers, and whitespace
   const activeTokens = tokens.filter(t => !t.deleted && !t.isPause && t.text.trim().length > 0);
 
   const lines: string[] = [
@@ -81,7 +86,6 @@ export function generateAssSubtitleScript(
     return lines.join('\n');
   }
 
-  // Chunk tokens into natural conversational phrase lines (by word count or pauses >0.4s)
   const dialogueChunks: WordToken[][] = [];
   let currentChunk: WordToken[] = [];
 
@@ -106,14 +110,23 @@ export function generateAssSubtitleScript(
     dialogueChunks.push(currentChunk);
   }
 
+  const hasValidSegments = Array.isArray(segments) && segments.length > 0;
+
   for (const chunk of dialogueChunks) {
     const first = chunk[0];
     const last = chunk[chunk.length - 1];
     if (!first || !last) continue;
 
-    const startTime = formatAssTimestamp(first.start);
-    const endTime = formatAssTimestamp(Math.max(last.end, first.start + 0.3));
-    const sentenceText = chunk.map(t => t.text).join(' ');
+    const mappedStartSec = hasValidSegments
+      ? Number(sourceToVirtualTime(asSourceSeconds(first.start), segments))
+      : Number(first.start);
+    const rawMappedEndSec = hasValidSegments
+      ? Number(sourceToVirtualTime(asSourceSeconds(last.end), segments))
+      : Number(last.end);
+
+    const startTime = formatAssTimestamp(mappedStartSec);
+    const endTime = formatAssTimestamp(Math.max(rawMappedEndSec, mappedStartSec + 0.3));
+    const sentenceText = chunk.map(t => t.replacementText ?? t.text).join(' ');
 
     lines.push(`Dialogue: 0,${startTime},${endTime},ScarletDefault,,0,0,0,,${sentenceText}`);
   }
@@ -141,16 +154,51 @@ export function generateConcatDemuxerList(
   return lines.join('\n') + '\n';
 }
 
+/**
+ * Builds an FFmpeg scale+pad filter expression for target resolution and aspect ratio.
+ */
+export function buildVideoScaleFilter(
+  resolution: '720p' | '1080p' | '4k' | 'original' = '1080p',
+  aspectRatio: AspectRatio = '16:9'
+): string | undefined {
+  if (resolution === 'original' && aspectRatio === '16:9') {
+    return undefined;
+  }
+
+  const baseHeight = resolution === '4k' ? 2160 : resolution === '720p' ? 720 : 1080;
+  let width = Math.round((baseHeight * 16) / 9);
+  let height = baseHeight;
+
+  if (aspectRatio === '9:16') {
+    width = baseHeight;
+    height = Math.round((baseHeight * 16) / 9);
+  } else if (aspectRatio === '1:1') {
+    width = baseHeight;
+    height = baseHeight;
+  } else if (aspectRatio === '4:5') {
+    width = Math.round((baseHeight * 4) / 5);
+    height = baseHeight;
+  } else if (aspectRatio === '21:9') {
+    width = Math.round((baseHeight * 21) / 9);
+    height = baseHeight;
+  } else if (aspectRatio === '4:3') {
+    width = Math.round((baseHeight * 4) / 3);
+    height = baseHeight;
+  }
+
+  const evenW = width % 2 === 0 ? width : width + 1;
+  const evenH = height % 2 === 0 ? height : height + 1;
+
+  return `scale=${evenW}:${evenH}:force_original_aspect_ratio=decrease,pad=${evenW}:${evenH}:(ow-iw)/2:(oh-ih)/2:black`;
+}
+
 export interface FilterComplexOptions {
   subtitleVirtualFileName?: string;
-  videoScaleFilter?: string; // e.g. "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+  videoScaleFilter?: string;
 }
 
 /**
  * Generates frame-accurate single-pass FFmpeg filter_complex for ripple playback segments.
- *
- * Automatically stitches [trim] + [setpts] and [atrim] + [asetpts] into a consolidated
- * [concat=n=k:v=1:a=1] graph.
  */
 export function generateFfmpegFilterComplex(
   segments: PlaybackSegment[],
@@ -180,19 +228,16 @@ export function generateFfmpegFilterComplex(
     const sStart = seg.sourceStart.toFixed(3);
     const sEnd = seg.sourceEnd.toFixed(3);
 
-    // Video trim & PTS reset
     filterParts.push(`[0:v]trim=start=${sStart}:end=${sEnd},setpts=PTS-STARTPTS[v${i}]`);
-    // Audio trim & PTS reset
     filterParts.push(`[0:a]atrim=start=${sStart}:end=${sEnd},asetpts=PTS-STARTPTS[a${i}]`);
 
     concatInputs.push(`[v${i}][a${i}]`);
   }
 
   let finalVideoMap = '[outv]';
-  let finalAudioMap = '[outa]';
+  const finalAudioMap = '[outa]';
 
   if (segments.length === 1) {
-    // Single segment: direct map or optional subtitle burn-in
     let videoFilter = '[v0]';
     if (options.videoScaleFilter) {
       filterParts.push(`${videoFilter}${options.videoScaleFilter}[vscaled]`);
@@ -206,7 +251,6 @@ export function generateFfmpegFilterComplex(
     }
     filterParts.push(`[a0]anull[outa]`);
   } else {
-    // Multi-segment concat
     const concatFilter = `${concatInputs.join('')}concat=n=${segments.length}:v=1:a=1[vconcat][outa]`;
     filterParts.push(concatFilter);
 
@@ -219,7 +263,7 @@ export function generateFfmpegFilterComplex(
       const safeSub = options.subtitleVirtualFileName.replace(/'/g, "'\\''").replace(/:/g, '\\:');
       filterParts.push(`${postConcatVideo}ass='${safeSub}'[outv]`);
     } else {
-      finalVideoMap = '[vconcat]';
+      finalVideoMap = postConcatVideo;
     }
   }
 

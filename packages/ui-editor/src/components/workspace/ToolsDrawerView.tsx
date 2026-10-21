@@ -289,15 +289,17 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
             Motion Presets
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
-            {['Zoom in', 'Move left', 'Spin 1', 'Zoom out', 'Bounce', 'Drop'].map(preset => {
-              const isSelected = settings.animation.selectedPreset === preset;
+            {['None', 'Zoom in', 'Move left', 'Spin 1', 'Zoom out', 'Bounce', 'Drop'].map(preset => {
+              const isSelected = settings.animation.selectedPreset === preset || (preset === 'None' && (!settings.animation.selectedPreset || settings.animation.selectedPreset === 'none'));
               return (
                 <div
                   key={preset}
+                  id={`opt-anim-${preset.toLowerCase().replace(/\s+/g, '-')}`}
+                  data-testid={`opt-anim-${preset.toLowerCase().replace(/\s+/g, '-')}`}
                   onClick={() =>
                     onUpdateSettings(prev => ({
                       ...prev,
-                      animation: { selectedPreset: preset },
+                      animation: { selectedPreset: preset === 'None' ? 'none' : preset },
                     }))
                   }
                   style={{
@@ -478,6 +480,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
           </h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
             {[
+              { id: 'none' as const, label: 'Standard (Full)' },
               { id: 'pip' as const, label: 'Picture in picture' },
               { id: 'logo' as const, label: 'Logo Corner' },
               { id: 'triplet' as const, label: 'Triplet Split' },
@@ -485,7 +488,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               { id: 'side-right' as const, label: 'Side by side — right' },
               { id: 'top-bottom' as const, label: 'Top and bottom' },
             ].map(m => {
-              const isSelected = settings.overlay.mode === m.id;
+              const isSelected = settings.overlay.mode === m.id || (m.id === 'none' && (!settings.overlay.mode || settings.overlay.mode === 'none'));
               return (
                 <div
                   key={m.id}
@@ -529,7 +532,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { mode: 'highlight', opacity: 100, feathering: 35, outline: true },
+                  highlightConceal: { mode: 'none', opacity: 100, feathering: 35, outline: false },
                 }))
               }
             >
@@ -540,10 +543,36 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               type="button"
+              id="btn-highlight-off"
+              data-testid="btn-highlight-off"
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { ...prev.highlightConceal, mode: 'highlight' },
+                  highlightConceal: { ...prev.highlightConceal, mode: 'none' },
+                }))
+              }
+              style={{
+                flex: 1,
+                padding: '6px',
+                borderRadius: '6px',
+                backgroundColor: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none') ? '#168BFF' : '#22262E',
+                color: '#FFFFFF',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none') ? 600 : 400,
+              }}
+            >
+              Off
+            </button>
+            <button
+              type="button"
+              id="btn-highlight-on"
+              data-testid="btn-highlight-on"
+              onClick={() =>
+                onUpdateSettings(prev => ({
+                  ...prev,
+                  highlightConceal: { ...prev.highlightConceal, mode: 'highlight', outline: true },
                 }))
               }
               style={{
@@ -555,16 +584,19 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: '11px',
+                fontWeight: settings.highlightConceal.mode === 'highlight' ? 600 : 400,
               }}
             >
               Highlight
             </button>
             <button
               type="button"
+              id="btn-conceal-on"
+              data-testid="btn-conceal-on"
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { ...prev.highlightConceal, mode: 'conceal' },
+                  highlightConceal: { ...prev.highlightConceal, mode: 'conceal', outline: true },
                 }))
               }
               style={{
@@ -576,6 +608,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: '11px',
+                fontWeight: settings.highlightConceal.mode === 'conceal' ? 600 : 400,
               }}
             >
               Conceal (Blur)

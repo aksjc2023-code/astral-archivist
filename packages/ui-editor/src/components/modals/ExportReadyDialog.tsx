@@ -5,14 +5,28 @@ export interface ExportReadyDialogProps {
   isOpen: boolean;
   onClose: () => void;
   outputPath?: string;
+  downloadUrl?: string | null;
+  fileName?: string;
 }
 
 export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
   isOpen,
   onClose,
-  outputPath = 'C:\\Users\\movavi\\Desktop\\ScarletCut_Export.mp4',
+  outputPath = 'ScarletCut_Export.mp4',
+  downloadUrl,
+  fileName = 'ScarletCut_Export_2026.mp4',
 }) => {
   if (!isOpen) return null;
+
+  const triggerDownload = () => {
+    if (!downloadUrl) return;
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   return (
     <div
@@ -43,7 +57,6 @@ export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
           gap: '14px',
         }}
       >
-        {/* Blue Info Icon Circle (Page 7) */}
         <div
           style={{
             width: '48px',
@@ -62,47 +75,43 @@ export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
           i
         </div>
 
-        {/* Heading & Body (Page 7) */}
         <div>
           <h2 style={{ fontSize: '18px', fontWeight: 600, color: '#FFFFFF', margin: 0, marginBottom: '6px' }}>
             Your video is ready!
           </h2>
           <p style={{ fontSize: '12px', color: '#A4B0BE', lineHeight: '1.5', margin: 0 }}>
-            The video file has been saved successfully. Don't forget to save your project in case you want to edit it later.
+            The video file has been saved successfully. Don&apos;t forget to save your project in case you want to edit it later.
           </p>
         </div>
 
-        {/* Output Path Link with Download action */}
         <div
-          onClick={() => {
-            const a = document.createElement('a');
-            a.href = 'https://www.w3schools.com/html/mov_bbb.mp4';
-            a.download = 'ScarletCut_Export_2026.mp4';
-            a.target = '_blank';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+          id="btn-download-export-ready"
+          data-testid="btn-download-export-ready"
+          role="button"
+          tabIndex={0}
+          onClick={triggerDownload}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') triggerDownload();
           }}
           style={{
             fontSize: '11px',
-            color: '#168BFF',
-            cursor: 'pointer',
+            color: downloadUrl ? '#168BFF' : '#636E7B',
+            cursor: downloadUrl ? 'pointer' : 'default',
             backgroundColor: '#14171C',
             padding: '8px 14px',
             borderRadius: '6px',
-            border: '1px solid #168BFF',
+            border: `1px solid ${downloadUrl ? '#168BFF' : '#2B303A'}`,
             width: '100%',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
             fontWeight: 600,
           }}
-          title="Click to download sample export"
+          title={downloadUrl ? 'Click to download exported file' : 'Export blob unavailable'}
         >
-          ⬇ Download Exported File: ScarletCut_Export_2026.mp4
+          {downloadUrl ? `⬇ Download Exported File: ${fileName}` : `Saved path: ${outputPath}`}
         </div>
 
-        {/* Actions (Page 7: Cancel & OK) */}
         <div style={{ display: 'flex', gap: '10px', width: '100%', justifyContent: 'center', marginTop: '6px' }}>
           <ScarletButton
             variant="secondary"
@@ -117,15 +126,10 @@ export const ExportReadyDialog: React.FC<ExportReadyDialogProps> = ({
             variant="primary"
             size="md"
             onClick={() => {
-              const a = document.createElement('a');
-              a.href = 'https://www.w3schools.com/html/mov_bbb.mp4';
-              a.download = 'ScarletCut_Export_2026.mp4';
-              a.target = '_blank';
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
+              triggerDownload();
               onClose();
             }}
+            disabled={!downloadUrl}
             style={{ minWidth: '120px' }}
           >
             Download &amp; Close

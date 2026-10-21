@@ -44,25 +44,25 @@ export const ImportDropzoneView: React.FC<ImportDropzoneViewProps> = ({
       id: 'record-video' as const,
       title: 'Record Video',
       icon: <IconWebcam size={26} color="#168BFF" />,
-      subtext: 'Webcam capture (Preview)',
+      subtext: 'Webcam via getUserMedia',
     },
     {
       id: 'capture-screen' as const,
       title: 'Capture Screencast',
       icon: <IconScreencast size={26} color="#2ED573" />,
-      subtext: 'Screen & App window (Preview)',
+      subtext: 'Screen via getDisplayMedia',
     },
     {
       id: 'record-audio' as const,
       title: 'Record Audio',
       icon: <IconMicrophone size={26} color="#FFA502" />,
-      subtext: 'Mic vocal purifier (Preview)',
+      subtext: 'Mic capture → WAV/WebM',
     },
     {
       id: 'quick-video' as const,
       title: 'Quick Video',
       icon: <IconSparkles size={26} color="#8854D0" />,
-      subtext: 'AI auto-montage (Preview)',
+      subtext: '5s webcam clip + ingest',
     },
   ];
 
@@ -153,7 +153,7 @@ export const ImportDropzoneView: React.FC<ImportDropzoneViewProps> = ({
       {/* 4 Quick-Capture Square Cards (Page 10 - Mock Controls) */}
       <div style={{ marginTop: '20px' }}>
         <h3 style={{ fontSize: '13px', fontWeight: 500, color: '#A4B0BE', marginBottom: '12px', margin: 0 }}>
-          Quick Capture & Studio Tools (Prototype Controls)
+          Quick Capture & Studio Tools
         </h3>
         <div
           style={{

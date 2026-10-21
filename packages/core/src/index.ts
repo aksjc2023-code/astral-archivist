@@ -3,4 +3,7 @@ export * from './timelineEngine';
 export * from './fillerDetector';
 export * from './offlineWhisper';
 export * from './filterGraphBuilder';
+export * from './audioProcessor';
+export * from './ttsEngine';
+export * from './extractiveSummarizer';
 export * from './mockData';

@@ -41,8 +41,14 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const [selectedTokenIds, setSelectedTokenIds] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatchIndex, setSearchMatchIndex] = useState(0);
   const lastSelectedIdRef = useRef<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const searchMatches = searchQuery.trim()
+    ? tokens.filter(t => t.text.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : [];
 
   const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
   const deletedCount = tokens.filter(t => t.deleted).length;
@@ -124,7 +130,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   const handleStartEdit = (token: WordToken, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingTokenId(token.id);
-    setEditText(token.text);
+    setEditText(token.replacementText ?? token.text);
   };
 
   const handleSaveEdit = (tokenId: string) => {
@@ -344,6 +350,91 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
         </div>
       </div>
 
+      {/* Transcript Search Filter */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px',
+          marginBottom: '12px',
+        }}
+      >
+        <input
+          id="input-transcript-search"
+          data-testid="input-transcript-search"
+          type="search"
+          placeholder="Filter transcript words…"
+          value={searchQuery}
+          onChange={e => {
+            setSearchQuery(e.target.value);
+            setSearchMatchIndex(0);
+          }}
+          onClick={e => e.stopPropagation()}
+          style={{
+            flex: 1,
+            maxWidth: '280px',
+            backgroundColor: '#111317',
+            border: '1px solid #2B303A',
+            borderRadius: '9999px',
+            padding: '6px 14px',
+            color: '#FFFFFF',
+            fontSize: '12px',
+            outline: 'none',
+          }}
+        />
+        {searchMatches.length > 0 && (
+          <>
+            <span style={{ fontSize: '11px', color: '#A4B0BE' }}>
+              {Math.min(searchMatchIndex + 1, searchMatches.length)} / {searchMatches.length}
+            </span>
+            <button
+              id="btn-transcript-search-prev"
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                const next = (searchMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+                setSearchMatchIndex(next);
+                const token = searchMatches[next];
+                if (token && onSeekToTime) onSeekToTime(token.start);
+              }}
+              style={{
+                backgroundColor: '#22262E',
+                border: '1px solid #2B303A',
+                color: '#FFFFFF',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                cursor: 'pointer',
+              }}
+            >
+              ↑
+            </button>
+            <button
+              id="btn-transcript-search-next"
+              type="button"
+              onClick={e => {
+                e.stopPropagation();
+                const next = (searchMatchIndex + 1) % searchMatches.length;
+                setSearchMatchIndex(next);
+                const token = searchMatches[next];
+                if (token && onSeekToTime) onSeekToTime(token.start);
+              }}
+              style={{
+                backgroundColor: '#22262E',
+                border: '1px solid #2B303A',
+                color: '#FFFFFF',
+                borderRadius: '6px',
+                padding: '4px 8px',
+                fontSize: '11px',
+                cursor: 'pointer',
+              }}
+            >
+              ↓
+            </button>
+          </>
+        )}
+      </div>
+
       {/* Filler & Discourse Legend Strip */}
       <div
         style={{
@@ -441,6 +532,10 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           const isKaraokeActive = activeToken?.id === token.id;
           const isSelected = selectedTokenIds.has(token.id);
           const isDeleted = token.deleted;
+          const isSearchMatch = searchQuery.trim().length > 0
+            && token.text.toLowerCase().includes(searchQuery.trim().toLowerCase());
+          const isCurrentSearchHit = isSearchMatch
+            && searchMatches[searchMatchIndex]?.id === token.id;
 
           if (editingTokenId === token.id) {
             return (
@@ -556,6 +651,10 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                 transition: 'all 0.12s ease',
                 backgroundColor: isKaraokeActive
                   ? '#168BFF'
+                  : isCurrentSearchHit
+                  ? 'rgba(46, 213, 115, 0.45)'
+                  : isSearchMatch
+                  ? 'rgba(46, 213, 115, 0.2)'
                   : isSelected
                   ? '#2B5278'
                   : isDeleted
@@ -563,6 +662,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                   : token.isEdited
                   ? 'rgba(136, 84, 208, 0.2)'
                   : 'transparent',
+                outline: isCurrentSearchHit ? '1px solid #2ED573' : undefined,
                 color: isKaraokeActive
                   ? '#FFFFFF'
                   : isDeleted
@@ -591,7 +691,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                 fontWeight: isKaraokeActive ? 600 : isSelected ? 500 : 400,
               }}
             >
-              {token.text}
+              {token.replacementText ?? token.text}
 
               {/* Hard Filler Indicator */}
               {token.isFiller && !isDeleted && (

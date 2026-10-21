@@ -214,16 +214,35 @@ export function alignWhisperChunksToWordTokens(
     const clampedStart = Math.max(prevEnd, rawStart);
     const clampedEnd = Math.max(clampedStart + 0.04, rawEnd);
 
-    tokens.push({
-      id: `tok_${mediaId ? `${mediaId}_` : ''}${tokens.length + 1}`,
-      text: trimmedText,
-      start: asSourceSeconds(Number(clampedStart.toFixed(3))),
-      end: asSourceSeconds(Number(clampedEnd.toFixed(3))),
-      deleted: false,
-      mediaId,
-    });
-
-    prevEnd = clampedEnd;
+    const words = trimmedText.split(/\s+/).filter(Boolean);
+    if (words.length <= 1) {
+      tokens.push({
+        id: `tok_${mediaId ? `${mediaId}_` : ''}${tokens.length + 1}`,
+        text: trimmedText,
+        start: asSourceSeconds(Number(clampedStart.toFixed(3))),
+        end: asSourceSeconds(Number(clampedEnd.toFixed(3))),
+        deleted: false,
+        mediaId,
+      });
+      prevEnd = clampedEnd;
+    } else {
+      const totalDur = Math.max(0.12 * words.length, clampedEnd - clampedStart);
+      const step = totalDur / words.length;
+      for (let w = 0; w < words.length; w++) {
+        const wordText = words[w]!;
+        const wStart = Number((clampedStart + w * step).toFixed(3));
+        const wEnd = Number((clampedStart + (w + 1) * step).toFixed(3));
+        tokens.push({
+          id: `tok_${mediaId ? `${mediaId}_` : ''}${tokens.length + 1}`,
+          text: wordText,
+          start: asSourceSeconds(wStart),
+          end: asSourceSeconds(wEnd),
+          deleted: false,
+          mediaId,
+        });
+      }
+      prevEnd = Number((clampedStart + totalDur).toFixed(3));
+    }
   }
 
   return tokens;

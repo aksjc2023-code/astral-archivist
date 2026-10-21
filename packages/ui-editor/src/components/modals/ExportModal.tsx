@@ -21,11 +21,13 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   onExportComplete,
   onStartExport,
 }) => {
-  const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'mobile' | 'tv' | 'social'>('social');
+  const [activeTab, setActiveTab] = useState<'video' | 'audio' | 'mobile' | 'tv' | 'social'>('video');
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStage, setExportStage] = useState('Idle');
   const [memfsLog, setMemfsLog] = useState('');
+  const [format, setFormat] = useState<'MP4' | 'MOV' | 'WebM' | 'GIF' | 'MP3'>('MP4');
+  const [quality, setQuality] = useState<'Good' | 'High' | 'Highest'>('High');
 
   const [settings, setSettings] = useState<ExportSettings>({
     title: 'My summer story — ScarletCut',
@@ -34,9 +36,64 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     category: 'Film & Animation',
     privacy: 'Public',
     tags: 'movavi, scarletcut, webster2026, webgpu, ffmpeg-wasm',
-    outputPath: 'C:\\Users\\movavi\\Desktop\\ScarletCut_Export.mp4',
+    outputPath: 'ScarletCut_Export.mp4',
     wasmMode: 'filter-complex-ass',
   });
+
+  const applyCategoryTab = (tab: typeof activeTab) => {
+    setActiveTab(tab);
+    if (tab === 'audio') {
+      setFormat('MP3');
+      setSettings(s => ({
+        ...s,
+        category: 'Audio Only',
+        outputPath: 'ScarletCut_Export.mp3',
+        wasmMode: 'stream-copy',
+      }));
+    } else if (tab === 'mobile') {
+      setFormat('MP4');
+      setSettings(s => ({
+        ...s,
+        resolution: '720p',
+        category: 'Mobile Device',
+        outputPath: 'ScarletCut_Mobile.mp4',
+      }));
+    } else if (tab === 'tv') {
+      setFormat('MP4');
+      setQuality('Highest');
+      setSettings(s => ({
+        ...s,
+        resolution: '4k',
+        category: 'Smart TV',
+        outputPath: 'ScarletCut_4K.mp4',
+        wasmMode: 'filter-complex-ass',
+      }));
+    } else if (tab === 'social') {
+      setFormat('MP4');
+      setSettings(s => ({
+        ...s,
+        resolution: '1080p',
+        category: 'Social Media',
+        privacy: 'Public',
+        outputPath: 'ScarletCut_Social.mp4',
+      }));
+    } else {
+      setFormat('MP4');
+      setSettings(s => ({
+        ...s,
+        category: 'Video File',
+        outputPath: 'ScarletCut_Export.mp4',
+      }));
+    }
+  };
+
+  const tabHeadlines: Record<typeof activeTab, { title: string; sub: string }> = {
+    video: { title: 'Export Video File', sub: 'Client-side FFmpeg WASM engine with MEMFS GC' },
+    audio: { title: 'Export Audio Only', sub: 'Extract timeline audio via stream-copy or re-encode' },
+    mobile: { title: 'Export for Mobile', sub: '720p optimized MP4 for phones & tablets' },
+    tv: { title: 'Export for Smart TV', sub: '4K Ultra HD with burned subtitles' },
+    social: { title: 'Upload to YouTube & Export MP4', sub: 'Client-side FFmpeg WASM engine with MEMFS GC' },
+  };
 
   const handleStart = async () => {
     setIsExporting(true);
@@ -185,7 +242,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   key={tab.id}
                   type="button"
                   title={tab.label}
-                  onClick={() => setActiveTab(tab.id)}
+                  onClick={() => applyCategoryTab(tab.id)}
                   style={{
                     width: '38px',
                     height: '38px',
@@ -229,10 +286,10 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             >
               <div>
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#FFFFFF' }}>
-                  Upload to YouTube &amp; Export MP4
+                  {tabHeadlines[activeTab].title}
                 </div>
                 <div style={{ fontSize: '11px', color: '#636E7B' }}>
-                  Client-side FFmpeg WASM engine with MEMFS GC
+                  {tabHeadlines[activeTab].sub}
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -282,15 +339,47 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               />
             </div>
 
-            {/* Resolution & Category */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            {/* Format / Resolution / Quality */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: '#A4B0BE', marginBottom: '4px' }}>
+                  Format
+                </label>
+                <select
+                  id="select-export-format"
+                  data-testid="select-export-format"
+                  value={format}
+                  onChange={e => {
+                    const next = e.target.value as typeof format;
+                    setFormat(next);
+                    const ext = next.toLowerCase();
+                    setSettings(s => ({
+                      ...s,
+                      outputPath: `ScarletCut_Export.${ext === 'webm' ? 'webm' : ext === 'mov' ? 'mov' : ext === 'gif' ? 'gif' : ext === 'mp3' ? 'mp3' : 'mp4'}`,
+                      wasmMode: next === 'MP3' || next === 'GIF' ? 'stream-copy' : s.wasmMode,
+                    }));
+                  }}
+                  style={inputStyle}
+                >
+                  {(activeTab === 'audio'
+                    ? (['MP3', 'WebM'] as const)
+                    : (['MP4', 'MOV', 'WebM', 'GIF', 'MP3'] as const)
+                  ).map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label style={{ display: 'block', fontSize: '11px', color: '#A4B0BE', marginBottom: '4px' }}>
                   Resolution
                 </label>
                 <select
+                  id="select-export-resolution"
+                  data-testid="select-export-resolution"
                   value={settings.resolution}
-                  onChange={e => setSettings({ ...settings, resolution: e.target.value as '1080p' })}
+                  disabled={activeTab === 'audio' || format === 'MP3'}
+                  onChange={e => setSettings({ ...settings, resolution: e.target.value as ExportSettings['resolution'] })}
                   style={inputStyle}
                 >
                   <option value="720p">720p HD</option>
@@ -301,11 +390,30 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
               <div>
                 <label style={{ display: 'block', fontSize: '11px', color: '#A4B0BE', marginBottom: '4px' }}>
+                  Quality
+                </label>
+                <select
+                  id="select-export-quality"
+                  data-testid="select-export-quality"
+                  value={quality}
+                  onChange={e => setQuality(e.target.value as typeof quality)}
+                  style={inputStyle}
+                >
+                  <option value="Good">Good</option>
+                  <option value="High">High</option>
+                  <option value="Highest">Highest</option>
+                </select>
+              </div>
+            </div>
+
+            {activeTab === 'social' && (
+              <div>
+                <label style={{ display: 'block', fontSize: '11px', color: '#A4B0BE', marginBottom: '4px' }}>
                   Privacy
                 </label>
                 <select
                   value={settings.privacy}
-                  onChange={e => setSettings({ ...settings, privacy: e.target.value as 'Public' })}
+                  onChange={e => setSettings({ ...settings, privacy: e.target.value as ExportSettings['privacy'] })}
                   style={inputStyle}
                 >
                   <option value="Public">Public</option>
@@ -313,7 +421,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                   <option value="Private">Private</option>
                 </select>
               </div>
-            </div>
+            )}
 
             {/* WASM Export Mode Radio (Webster PS #09 Mandate) */}
             <div

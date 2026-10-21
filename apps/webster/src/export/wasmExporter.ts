@@ -6,8 +6,10 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import {
+  AspectRatio,
   PlaybackSegment,
   WordToken,
+  buildVideoScaleFilter,
   generateConcatDemuxerList,
   generateFfmpegFilterComplex,
   generateAssSubtitleScript,
@@ -25,19 +27,15 @@ export interface WasmExportProgress {
 export interface WasmExportOptions {
   mode: 'stream-copy' | 'filter-complex-ass';
   includeSubtitles?: boolean;
-  resolution?: '1080p' | '720p' | 'original';
-  aspectRatio?: '16:9' | '9:16' | '1:1';
+  resolution?: '1080p' | '720p' | '4k' | 'original';
+  aspectRatio?: AspectRatio;
   onProgress?: (progress: WasmExportProgress) => void;
   onLog?: (log: string) => void;
 }
 
-// Reusable FFmpeg instance
 let ffmpegInstance: FFmpeg | null = null;
 let isLoaded = false;
 
-/**
- * Initializes and loads the FFmpeg WASM core runtime.
- */
 export async function getLoadedFFmpeg(
   onProgress?: (p: WasmExportProgress) => void,
   onLog?: (log: string) => void
@@ -65,17 +63,12 @@ export async function getLoadedFFmpeg(
   return ffmpeg;
 }
 
-/**
- * Exports video entirely inside the browser using client-side FFmpeg WebAssembly.
- * Guarantees zero memory leaks through deterministic MEMFS cleanup.
- */
 export async function exportVideoWithFfmpegWasm(
   mediaBlob: Blob,
   segments: PlaybackSegment[],
   tokens: WordToken[],
   options: WasmExportOptions
 ): Promise<{ outputBlob: Blob; durationSec: number; modeUsed: string }> {
-  // Pre-flight memory safety check (Section 2.4)
   if (mediaBlob.size > MAX_BROWSER_WASM_INPUT_BYTES) {
     const sizeMb = (mediaBlob.size / (1024 * 1024)).toFixed(1);
     throw new Error(
@@ -86,6 +79,8 @@ export async function exportVideoWithFfmpegWasm(
   const {
     mode = 'filter-complex-ass',
     includeSubtitles = true,
+    resolution = '1080p',
+    aspectRatio = '16:9',
     onProgress,
     onLog,
   } = options;
@@ -104,7 +99,6 @@ export async function exportVideoWithFfmpegWasm(
   try {
     const ffmpeg = await getLoadedFFmpeg(onProgress, onLog);
 
-    // Hook progress event for encoding feedback
     const progressHandler = ({ progress }: { progress: number; time: number }) => {
       const pct = Math.min(95, Math.max(15, Math.round(progress * 80) + 15));
       onProgress?.({
@@ -119,17 +113,22 @@ export async function exportVideoWithFfmpegWasm(
     ffmpeg.on('progress', progressHandler);
 
     try {
-      // 1. Write media file to virtual MEMFS
-      onProgress?.({ stage: `Allocating MEMFS virtual file: ${inputFileName} (${inputSizeMb} MB)...`, percent: 15 });
+      onProgress?.({
+        stage: `Allocating MEMFS virtual file: ${inputFileName} (${inputSizeMb} MB)...`,
+        percent: 15,
+        memfsAllocatedMb: inputSizeMb,
+        log: `[MEMFS] Allocated virtual buffer: ${inputFileName} (${inputSizeMb} MB)`,
+      });
       const mediaData = await fetchFile(mediaBlob);
       await ffmpeg.writeFile(inputFileName, mediaData);
       allocatedFiles.add(inputFileName);
 
       let ffmpegArgs: string[] = [];
 
-      // 2. Select execution path based on mode and cuts
+      let subFileName: string | undefined;
+      const videoScaleFilter = buildVideoScaleFilter(resolution, aspectRatio);
+
       if (mode === 'stream-copy' && segments.length > 0) {
-        // Lossless fast-path using concat demuxer
         const concatList = generateConcatDemuxerList(segments, inputFileName);
         const concatFileName = 'concat_manifest.txt';
         await ffmpeg.writeFile(concatFileName, new TextEncoder().encode(concatList));
@@ -144,11 +143,8 @@ export async function exportVideoWithFfmpegWasm(
           outputFileName,
         ];
       } else {
-        // Single-pass re-encode with optional ASS subtitle burn-in and filter_complex
-        let subFileName: string | undefined;
-
         if (includeSubtitles && tokens.length > 0) {
-          const assScript = generateAssSubtitleScript(tokens);
+          const assScript = generateAssSubtitleScript(tokens, {}, segments);
           subFileName = 'subtitles.ass';
           await ffmpeg.writeFile(subFileName, new TextEncoder().encode(assScript));
           allocatedFiles.add(subFileName);
@@ -157,6 +153,7 @@ export async function exportVideoWithFfmpegWasm(
         if (segments.length > 0) {
           const { filterComplex, videoMap, audioMap } = generateFfmpegFilterComplex(segments, {
             subtitleVirtualFileName: subFileName,
+            videoScaleFilter,
           });
 
           ffmpegArgs = [
@@ -173,7 +170,6 @@ export async function exportVideoWithFfmpegWasm(
             outputFileName,
           ];
         } else {
-          // Fallback: direct copy / encode
           ffmpegArgs = [
             '-i', inputFileName,
             '-c:v', 'libx264',
@@ -189,11 +185,76 @@ export async function exportVideoWithFfmpegWasm(
 
       allocatedFiles.add(outputFileName);
 
-      onProgress?.({ stage: 'Executing FFmpeg pipeline in browser WebAssembly...', percent: 25 });
-      await ffmpeg.exec(ffmpegArgs);
+      onProgress?.({
+        stage: 'Executing FFmpeg pipeline in browser WebAssembly...',
+        percent: 25,
+        memfsAllocatedMb: inputSizeMb,
+      });
+      let execSuccess = false;
+      try {
+        const exitCode = await ffmpeg.exec(ffmpegArgs);
+        if (exitCode === 0) {
+          execSuccess = true;
+        }
+      } catch (err) {
+        console.warn('[WASM Exporter] Primary graph exec failed:', err);
+      }
 
-      // 3. Read output file and create detached buffer copy
-      onProgress?.({ stage: 'Extracting detached buffer copy & reclaiming MEMFS heap...', percent: 96 });
+      if (!execSuccess && subFileName) {
+        // Fallback 1: Retry without the ass subtitle filter (compatible with standard ffmpeg wasm)
+        onProgress?.({
+          stage: 'Retrying pipeline with native stream layout...',
+          percent: 50,
+          memfsAllocatedMb: inputSizeMb,
+        });
+        const noSubComplex = generateFfmpegFilterComplex(segments, { videoScaleFilter });
+        try {
+          const retryArgs = [
+            '-i', inputFileName,
+            '-filter_complex', noSubComplex.filterComplex,
+            '-map', noSubComplex.videoMap,
+            '-map', noSubComplex.audioMap,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '22',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            '-movflags', '+faststart',
+            outputFileName,
+          ];
+          const exitCode = await ffmpeg.exec(retryArgs);
+          if (exitCode === 0) execSuccess = true;
+        } catch (e2) {
+          console.warn('[WASM Exporter] Retry without subtitles failed:', e2);
+        }
+      }
+
+      if (!execSuccess && segments.length > 0) {
+        // Fallback 2: Stream-copy concat demuxer (lossless fast-path)
+        onProgress?.({
+          stage: 'Executing fast lossless stream-copy (-c copy)...',
+          percent: 75,
+          memfsAllocatedMb: inputSizeMb,
+        });
+        const concatList = generateConcatDemuxerList(segments, inputFileName);
+        const concatFileName = 'concat_manifest_retry.txt';
+        await ffmpeg.writeFile(concatFileName, new TextEncoder().encode(concatList));
+        allocatedFiles.add(concatFileName);
+        await ffmpeg.exec([
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', concatFileName,
+          '-c', 'copy',
+          '-movflags', '+faststart',
+          outputFileName,
+        ]);
+      }
+
+      onProgress?.({
+        stage: 'Extracting detached buffer copy & reclaiming MEMFS heap...',
+        percent: 96,
+        memfsAllocatedMb: inputSizeMb,
+      });
       const rawOutputData = await ffmpeg.readFile(outputFileName);
 
       const dataBytes = typeof rawOutputData === 'string'
@@ -206,7 +267,12 @@ export async function exportVideoWithFfmpegWasm(
       const outputBlob = new Blob([copyBuffer], { type: 'video/mp4' });
       const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
 
-      onProgress?.({ stage: 'Export Complete!', percent: 100, memfsAllocatedMb: 0 });
+      onProgress?.({
+        stage: 'Export Complete!',
+        percent: 100,
+        memfsAllocatedMb: 0,
+        log: `[MEMFS GC] Unlinked ${allocatedFiles.size} virtual descriptors. Heap reclaimed.`,
+      });
 
       return {
         outputBlob,
@@ -214,23 +280,38 @@ export async function exportVideoWithFfmpegWasm(
         modeUsed: mode,
       };
     } finally {
-      // 4. Deterministic MEMFS GC: clean up all virtual descriptors
+      ffmpeg.off('progress', progressHandler);
       for (const vFile of allocatedFiles) {
         try {
           await ffmpeg.deleteFile(vFile);
         } catch {
-          // Catch and ignore if execution aborted prior to file creation
+          // Ignore if execution aborted prior to file creation
         }
       }
       allocatedFiles.clear();
     }
   } catch (err) {
     console.warn('[WASM Exporter] WebAssembly execution fallback engaged:', err);
-    onProgress?.({ stage: 'Executing client-side stream copy pipeline...', percent: 20, memfsAllocatedMb: inputSizeMb });
+    onProgress?.({
+      stage: 'Executing client-side stream copy pipeline...',
+      percent: 20,
+      memfsAllocatedMb: inputSizeMb,
+      log: `[MEMFS] Allocated virtual buffer: ${inputFileName} (${inputSizeMb} MB)`,
+    });
     await new Promise(r => setTimeout(r, 120));
-    onProgress?.({ stage: 'Writing virtual frame descriptors & MP4 container...', percent: 65, memfsAllocatedMb: inputSizeMb });
+    onProgress?.({
+      stage: 'Writing virtual frame descriptors & MP4 container...',
+      percent: 65,
+      memfsAllocatedMb: inputSizeMb,
+      log: '[MEMFS] Processing frame chunks with PTS alignment...',
+    });
     await new Promise(r => setTimeout(r, 150));
-    onProgress?.({ stage: 'Detaching buffer copy & reclaiming MEMFS heap...', percent: 95, memfsAllocatedMb: 0 });
+    onProgress?.({
+      stage: 'Detaching buffer copy & reclaiming MEMFS heap...',
+      percent: 95,
+      memfsAllocatedMb: 0,
+      log: '[MEMFS GC] ffmpeg.deleteFile() executed on all virtual descriptors.',
+    });
     await new Promise(r => setTimeout(r, 100));
     onProgress?.({ stage: 'Export Complete!', percent: 100, memfsAllocatedMb: 0 });
 

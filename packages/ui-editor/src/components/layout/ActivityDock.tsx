@@ -49,6 +49,8 @@ export const ActivityDock: React.FC<ActivityDockProps> = ({ activeTab, onTabChan
         return (
           <button
             key={item.id}
+            id={`dock-tab-${item.id}`}
+            data-testid={`dock-tab-${item.id}`}
             type="button"
             title={item.label}
             onClick={() => onTabChange(item.id)}

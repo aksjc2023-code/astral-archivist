@@ -5,6 +5,12 @@ import {
   generateAssSubtitleScript,
   generateConcatDemuxerList,
   generateFfmpegFilterComplex,
+  buildVideoScaleFilter,
+  buildPlaybackSegments,
+  processVocalPurifierPcm,
+  computeAudioDuckingGain,
+  synthesizeOverdubWavBytes,
+  summarizeTranscriptTokens,
   WordToken,
   PlaybackSegment,
   asSourceSeconds,
@@ -17,27 +23,24 @@ test('1. formatAssTimestamp converts seconds to H:MM:SS.cs standard ASS format',
   assert.equal(formatAssTimestamp(1.234), '0:00:01.23');
   assert.equal(formatAssTimestamp(65.789), '0:01:05.79');
   assert.equal(formatAssTimestamp(3661.05), '1:01:01.05');
-  assert.equal(formatAssTimestamp(-5), '0:00:00.00'); // Negative guard
+  assert.equal(formatAssTimestamp(-5), '0:00:00.00');
 });
 
-test('2. generateAssSubtitleScript filters deleted & pause tokens and formats dialogues', () => {
+test('2. generateAssSubtitleScript filters deleted & pause tokens and maps virtual timestamps across cuts', () => {
   const tokens: WordToken[] = [
-    { id: '1', text: 'Hello', start: asSourceSeconds(1.0), end: asSourceSeconds(1.5), deleted: false },
-    { id: '2', text: 'um', start: asSourceSeconds(1.55), end: asSourceSeconds(1.85), deleted: true, isFiller: true },
-    { id: 'p1', text: '[0.8s pause]', start: asSourceSeconds(1.97), end: asSourceSeconds(2.77), deleted: false, isPause: true },
-    { id: '3', text: 'World', start: asSourceSeconds(2.8), end: asSourceSeconds(3.3), deleted: false },
+    { id: '1', text: 'Hello', start: asSourceSeconds(0.0), end: asSourceSeconds(1.0), deleted: false },
+    { id: '2', text: 'um', start: asSourceSeconds(1.0), end: asSourceSeconds(3.0), deleted: true, isFiller: true },
+    { id: '3', text: 'World', replacementText: 'Galaxy', isEdited: true, start: asSourceSeconds(3.0), end: asSourceSeconds(4.0), deleted: false },
   ];
 
-  const ass = generateAssSubtitleScript(tokens);
+  const { segments } = buildPlaybackSegments(tokens);
+  const ass = generateAssSubtitleScript(tokens, {}, segments);
 
   assert.ok(ass.includes('[Script Info]'));
-  assert.ok(ass.includes('[V4+ Styles]'));
-  assert.ok(ass.includes('[Events]'));
-  assert.ok(ass.includes('Dialogue: 0,0:00:01.00,0:00:01.50,ScarletDefault,,0,0,0,,Hello'));
-  assert.ok(ass.includes('Dialogue: 0,0:00:02.80,0:00:03.30,ScarletDefault,,0,0,0,,World'));
-  // Must NOT include deleted "um" or pause token
+  assert.ok(ass.includes('Dialogue: 0,0:00:00.00,0:00:01.00,ScarletDefault,,0,0,0,,Hello'));
+  // Because [1.0, 3.0] was cut, 'Galaxy' at source [3.0, 4.0] maps to virtual [1.0, 2.0]
+  assert.ok(ass.includes('Dialogue: 0,0:00:01.00,0:00:02.00,ScarletDefault,,0,0,0,,Galaxy'));
   assert.ok(!ass.includes('um'));
-  assert.ok(!ass.includes('[0.8s pause]'));
 });
 
 test('3. generateConcatDemuxerList generates valid ffconcat manifest with inpoints and outpoints', () => {
@@ -67,7 +70,7 @@ test('3. generateConcatDemuxerList generates valid ffconcat manifest with inpoin
   assert.ok(manifest.includes("file 'input_video.mp4'\ninpoint 7.500\noutpoint 12.000"));
 });
 
-test('4. generateFfmpegFilterComplex builds single-pass concat graph across multiple cuts', () => {
+test('4. generateFfmpegFilterComplex builds single-pass concat graph across multiple cuts and scale filters', () => {
   const segments: PlaybackSegment[] = [
     {
       id: 's1',
@@ -87,8 +90,12 @@ test('4. generateFfmpegFilterComplex builds single-pass concat graph across mult
     },
   ];
 
+  const scaleFilter = buildVideoScaleFilter('1080p', '9:16');
+  assert.equal(scaleFilter, 'scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:black');
+
   const result = generateFfmpegFilterComplex(segments, {
     subtitleVirtualFileName: 'subs.ass',
+    videoScaleFilter: scaleFilter,
   });
 
   assert.equal(result.segmentCount, 2);
@@ -96,7 +103,32 @@ test('4. generateFfmpegFilterComplex builds single-pass concat graph across mult
   assert.ok(result.filterComplex.includes('[0:a]atrim=start=1.000:end=4.000,asetpts=PTS-STARTPTS[a0]'));
   assert.ok(result.filterComplex.includes('[0:v]trim=start=6.000:end=9.000,setpts=PTS-STARTPTS[v1]'));
   assert.ok(result.filterComplex.includes('[v0][a0][v1][a1]concat=n=2:v=1:a=1[vconcat][outa]'));
-  assert.ok(result.filterComplex.includes("[vconcat]ass='subs.ass'[outv]"));
+  assert.ok(result.filterComplex.includes("[vscaled]ass='subs.ass'[outv]"));
   assert.equal(result.videoMap, '[outv]');
   assert.equal(result.audioMap, '[outa]');
+});
+
+test('5. Vocal purifier DSP, WAV RIFF TTS overdubbing, and TF-IDF summarizer operate deterministically', () => {
+  const rawPcm = new Float32Array(1600);
+  for (let i = 0; i < rawPcm.length; i++) {
+    rawPcm[i] = Math.sin((2 * Math.PI * 440 * i) / 16000) * 0.5;
+  }
+  const purified = processVocalPurifierPcm(rawPcm, 16000);
+  assert.equal(purified.length, 1600);
+
+  const duckGain = computeAudioDuckingGain(1.5, [{ start: 1.0, end: 2.0, deleted: false }]);
+  assert.equal(duckGain, 0.22);
+
+  const { wavBytes, prosodyRate } = synthesizeOverdubWavBytes('symphony', 0.65, 16000);
+  assert.ok(wavBytes.byteLength > 44);
+  assert.ok(prosodyRate >= 0.65 && prosodyRate <= 1.75);
+
+  const summary = summarizeTranscriptTokens([
+    { id: '1', text: 'ScarletCut', start: asSourceSeconds(0), end: asSourceSeconds(0.5), deleted: false },
+    { id: '2', text: 'enables', start: asSourceSeconds(0.5), end: asSourceSeconds(1.0), deleted: false },
+    { id: '3', text: 'instant', start: asSourceSeconds(1.0), end: asSourceSeconds(1.5), deleted: false },
+    { id: '4', text: 'editing.', start: asSourceSeconds(1.5), end: asSourceSeconds(2.0), deleted: false },
+  ], 1);
+  assert.equal(summary.length, 1);
+  assert.equal(summary[0], 'ScarletCut enables instant editing.');
 });

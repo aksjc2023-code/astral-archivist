@@ -3,20 +3,31 @@ import { SubNavSection } from '@astral/core';
 import { ScarletButton } from '../common/ScarletButton';
 import { IconChevronDown } from '../common/ScarletIcons';
 
+export interface CustomFolder {
+  id: string;
+  name: string;
+}
+
 export interface SubNavSidebarProps {
-  activeSection: SubNavSection;
-  onSectionChange: (section: SubNavSection) => void;
+  activeSection: SubNavSection | string;
+  onSectionChange: (section: SubNavSection | string) => void;
   onDownloadAll?: () => void;
+  customFolders?: CustomFolder[];
+  onAddFolder?: (name: string) => void;
 }
 
 export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
   activeSection,
   onSectionChange,
   onDownloadAll,
+  customFolders = [],
+  onAddFolder,
 }) => {
   const [libraryOpen, setLibraryOpen] = useState(true);
+  const [isAddingFolder, setIsAddingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
 
-  const getItemStyle = (id: SubNavSection): React.CSSProperties => {
+  const getItemStyle = (id: string): React.CSSProperties => {
     const isActive = activeSection === id;
     return {
       display: 'flex',
@@ -32,6 +43,18 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
       transition: 'background-color 0.1s ease',
       fontWeight: isActive ? 500 : 400,
     };
+  };
+
+  const commitNewFolder = () => {
+    const trimmed = newFolderName.trim();
+    if (trimmed && onAddFolder) {
+      onAddFolder(trimmed);
+      setNewFolderName('');
+      setIsAddingFolder(false);
+    } else if (!trimmed) {
+      setIsAddingFolder(false);
+      setNewFolderName('');
+    }
   };
 
   return (
@@ -61,7 +84,7 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
           <span>Import Media</span>
         </div>
 
-        {/* My Files */}
+        {/* My Files / All Files */}
         <div
           id="subnav-my-files"
           data-testid="subnav-my-files"
@@ -73,6 +96,14 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
 
         {/* Nested Folders */}
         <div style={{ paddingLeft: '14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div
+            id="subnav-folder-all"
+            data-testid="subnav-folder-all"
+            style={getItemStyle('my-files')}
+            onClick={() => onSectionChange('my-files')}
+          >
+            <span>📁 All Files</span>
+          </div>
           <div
             id="subnav-folder-landscape"
             data-testid="subnav-folder-landscape"
@@ -89,17 +120,67 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
           >
             <span>📁 Nature</span>
           </div>
-          <div
-            style={{
-              padding: '6px 14px',
-              fontSize: '11px',
-              color: '#636E7B',
-              cursor: 'pointer',
-            }}
-            onClick={() => alert('Folder creation simulated in local project bin')}
-          >
-            <span>+ Add Folder...</span>
-          </div>
+          {customFolders.map(folder => (
+            <div
+              key={folder.id}
+              id={`subnav-folder-${folder.id}`}
+              data-testid={`subnav-folder-${folder.id}`}
+              style={getItemStyle(folder.id)}
+              onClick={() => onSectionChange(folder.id)}
+            >
+              <span>📁 {folder.name}</span>
+            </div>
+          ))}
+          {isAddingFolder ? (
+            <div style={{ padding: '4px 8px', display: 'flex', gap: '4px', alignItems: 'center' }}>
+              <input
+                id="input-add-folder"
+                data-testid="input-add-folder"
+                autoFocus
+                type="text"
+                value={newFolderName}
+                placeholder="Folder name"
+                onChange={e => setNewFolderName(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') commitNewFolder();
+                  if (e.key === 'Escape') {
+                    setIsAddingFolder(false);
+                    setNewFolderName('');
+                  }
+                }}
+                onBlur={commitNewFolder}
+                style={{
+                  flex: 1,
+                  backgroundColor: '#14171C',
+                  border: '1px solid #168BFF',
+                  borderRadius: '6px',
+                  padding: '4px 8px',
+                  color: '#FFFFFF',
+                  fontSize: '11px',
+                  outline: 'none',
+                }}
+              />
+            </div>
+          ) : (
+            <div
+              id="btn-add-folder"
+              data-testid="btn-add-folder"
+              role="button"
+              tabIndex={0}
+              style={{
+                padding: '6px 14px',
+                fontSize: '11px',
+                color: '#636E7B',
+                cursor: 'pointer',
+              }}
+              onClick={() => setIsAddingFolder(true)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') setIsAddingFolder(true);
+              }}
+            >
+              <span>+ Add Folder...</span>
+            </div>
+          )}
         </div>
 
         {/* Webster PS #09: Scarlet Transcript Tab */}
@@ -179,10 +260,12 @@ export const SubNavSidebar: React.FC<SubNavSidebarProps> = ({
       {/* Bottom Download All Pill */}
       <div style={{ paddingTop: '12px', display: 'flex', justifyContent: 'center' }}>
         <ScarletButton
+          id="btn-download-all"
+          data-testid="btn-download-all"
           variant="secondary"
           size="sm"
           style={{ width: '100%', fontSize: '11px' }}
-          onClick={onDownloadAll ?? (() => alert('Downloading all project assets archive...'))}
+          onClick={() => onDownloadAll?.()}
         >
           Download all
         </ScarletButton>

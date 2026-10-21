@@ -200,6 +200,7 @@ export interface ToolSettings {
   };
   animation: {
     selectedPreset: string;
+    enabled?: boolean;
   };
   equalizer: {
     preset: string;
@@ -207,13 +208,15 @@ export interface ToolSettings {
     vocalPurifierEnabled: boolean; // 85Hz HPF + noise gate
   };
   overlay: {
-    mode: 'pip' | 'logo' | 'triplet' | 'side-left' | 'side-right' | 'top-bottom';
+    mode: 'none' | 'pip' | 'logo' | 'triplet' | 'side-left' | 'side-right' | 'top-bottom';
+    enabled?: boolean;
   };
   highlightConceal: {
-    mode: 'highlight' | 'conceal';
+    mode: 'none' | 'highlight' | 'conceal';
     opacity: number;
     feathering: number;
     outline: boolean;
+    enabled?: boolean;
   };
   activeFilter?: string;      // E.g. 'Retro Film', 'Cyberpunk Neon', etc.
   rotationAngle?: number;     // 0, 90, 180, 270

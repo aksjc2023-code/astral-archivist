@@ -16,7 +16,11 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'credentialless',
     },
   },
+  worker: {
+    format: 'es',
+  },
   optimizeDeps: {
     exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'],
   },
+  assetsInclude: ['**/*.wasm', '**/*.onnx'],
 });
