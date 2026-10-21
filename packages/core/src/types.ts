@@ -27,8 +27,9 @@ export interface WordToken {
   start: SourceSeconds;       // Source timestamp in seconds
   end: SourceSeconds;         // Source timestamp in seconds
   deleted: boolean;           // Soft-deletion flag for ripple cuts
-  isFiller?: boolean;         // Lexical filler: "um", "uh", "like", "you know"
-  isPause?: boolean;          // Synthetic silence pause >0.5s
+  isFiller?: boolean;         // Hard lexical filler: "um", "uh", "er", "ah", "you know"
+  isDiscourseMarker?: boolean;// Discourse marker / soft filler: "like", "actually", "basically"
+  isPause?: boolean;          // Synthetic silence pause >0.5s with edge breathing room
   isEdited?: boolean;         // Softablitz A2: AI audio overdub flag
   replacementText?: string;
   replacementAudioUrl?: string;
