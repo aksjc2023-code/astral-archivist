@@ -46,12 +46,26 @@ import {
   ExportModal,
   ExportReadyDialog,
   FaultSimulatorBar,
+  IconSparkles,
 } from '@astral/ui-editor';
+
+import { transcribeMediaFile } from './services/whisperService';
+import { exportVideoWithFfmpegWasm } from './export/wasmExporter';
+import { ExportSettings } from '@astral/core';
 
 export const App: React.FC = () => {
   // Navigation & Workspace State
   const [activeDockTab, setActiveDockTab] = useState<ActivityDockTab>('media');
   const [activeSubNav, setActiveSubNav] = useState<SubNavSection>('my-files');
+
+  // WebGPU Whisper Live Transcription State
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribeStatus, setTranscribeStatus] = useState('');
+  const [transcribePercent, setTranscribePercent] = useState(0);
+  const [transcribeFileName, setTranscribeFileName] = useState('');
+
+  // Retain actual File/Blob handles for uploaded assets (to feed Whisper and FFmpeg WASM)
+  const fileBlobMapRef = useRef<Map<string, Blob>>(new Map());
 
   // Media Bin & Transcript State
   const [mediaAssets, setMediaAssets] = useState<MediaAsset[]>(INITIAL_MEDIA_ASSETS);
@@ -212,6 +226,21 @@ export const App: React.FC = () => {
       prev.map(t => {
         if (t.id !== tokenId) return t;
         const updated = { ...t, deleted: !t.deleted };
+        validateWordToken(updated);
+        return updated;
+      })
+    );
+  }, [pushHistory, tokens, clips]);
+
+  // Word Token Multiple Cut Action (Backspace / Range selection)
+  const handleToggleDeleteMultipleTokens = useCallback((tokenIds: string[]) => {
+    if (tokenIds.length === 0) return;
+    const idSet = new Set(tokenIds);
+    pushHistory(tokens, clips);
+    setTokens(prev =>
+      prev.map(t => {
+        if (!idSet.has(t.id)) return t;
+        const updated = { ...t, deleted: true };
         validateWordToken(updated);
         return updated;
       })
@@ -583,6 +612,61 @@ export const App: React.FC = () => {
     setCurrentTime(newClip.timelineStart);
   }, [clips, pushHistory, tokens]);
 
+  // Transcribe any media File/Blob with WebGPU Whisper
+  const handleTranscribeMedia = useCallback(async (blob: Blob, asset: MediaAsset) => {
+    setIsTranscribing(true);
+    setTranscribeFileName(asset.name);
+    setTranscribePercent(5);
+    setTranscribeStatus('Extracting audio & initializing Whisper...');
+
+    try {
+      const result = await transcribeMediaFile(blob, asset.id, (status, percent) => {
+        setTranscribeStatus(status);
+        if (percent !== undefined) {
+          setTranscribePercent(percent);
+        }
+      });
+
+      if (result.tokens.length > 0) {
+        pushHistory(tokens, clips);
+        setTokens(result.tokens);
+
+        // Derive audio duration from last token end
+        const calculatedDur = Math.max(...result.tokens.map(t => t.end), 5.0);
+        const roundedDur = asSeconds(Number(calculatedDur.toFixed(2)));
+
+        setMediaAssets(prev => prev.map(a => a.id === asset.id ? { ...a, duration: roundedDur } : a));
+
+        // Update clips linked to this asset
+        setClips(prev => prev.map(c => {
+          if (c.mediaId !== asset.id) return c;
+          return {
+            ...c,
+            timelineDuration: roundedDur,
+            sourceOut: asSourceSeconds(roundedDur),
+            duration: roundedDur,
+          };
+        }));
+      }
+
+      setTelemetry(prev => ({
+        ...prev,
+        recoveryLog: `Transcribed "${asset.name}" via WebGPU (${result.deviceUsed}). Generated ${result.tokens.length} words.`,
+      }));
+
+      // Switch to transcript tab so user sees the live words!
+      setActiveDockTab('media');
+      setActiveSubNav('transcript');
+    } catch (err) {
+      console.error('[Whisper] Transcription error:', err);
+      alert(`Transcription: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setIsTranscribing(false);
+      setTranscribePercent(0);
+      setTranscribeStatus('');
+    }
+  }, [clips, pushHistory, tokens]);
+
   // Real File Drag-and-Drop or Picker handling with tracked blob URLs
   const handleFilesAdded = useCallback((fileList: File[]) => {
     const newAssets: MediaAsset[] = fileList.map((f, idx) => {
@@ -590,11 +674,16 @@ export const App: React.FC = () => {
       blobUrlsRef.current.add(url);
       const isVid = f.type.startsWith('video') || f.name.endsWith('.mp4') || f.name.endsWith('.mov') || f.name.endsWith('.webm');
       const isAud = f.type.startsWith('audio') || f.name.endsWith('.mp3') || f.name.endsWith('.wav');
+      const assetId = `asset_upload_${Date.now()}_${idx}`;
+
+      // Save raw File object to feed Whisper and FFmpeg WASM
+      fileBlobMapRef.current.set(assetId, f);
+
       return {
-        id: `asset_upload_${Date.now()}_${idx}`,
+        id: assetId,
         name: f.name,
         type: isVid ? 'video' : isAud ? 'audio' : 'image',
-        duration: asSeconds(10.0),
+        duration: asSeconds(15.0),
         thumbnailUrl: isVid
           ? 'https://images.unsplash.com/photo-1574717024653-61fd2cf4d44d?w=400&q=80'
           : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=400&q=80',
@@ -606,9 +695,101 @@ export const App: React.FC = () => {
         fileSizeMb: Number((f.size / (1024 * 1024)).toFixed(1)),
       };
     });
+
     setMediaAssets(prev => [...newAssets, ...prev]);
-    setActiveSubNav('my-files');
-  }, []);
+
+    // Automatically prompt and transcribe the first imported audio/video file
+    const primaryFile = fileList[0];
+    const primaryAsset = newAssets[0];
+    if (primaryFile && primaryAsset && (primaryAsset.type === 'video' || primaryAsset.type === 'audio')) {
+      handleAddToTimeline(primaryAsset);
+      handleTranscribeMedia(primaryFile, primaryAsset);
+    } else {
+      setActiveSubNav('my-files');
+    }
+  }, [handleAddToTimeline, handleTranscribeMedia]);
+
+  // On-demand transcribe button trigger for active video
+  const handleTranscribeCurrentMedia = useCallback(async () => {
+    let blob = fileBlobMapRef.current.get(activeMediaId);
+    let asset = mediaAssets.find(a => a.id === activeMediaId);
+
+    if (!blob) {
+      if (activeVideoUrl) {
+        setTranscribeStatus('Fetching media file stream...');
+        setIsTranscribing(true);
+        setTranscribePercent(2);
+        try {
+          const resp = await fetch(activeVideoUrl);
+          blob = await resp.blob();
+        } catch {
+          setIsTranscribing(false);
+          alert('Could not fetch active media stream for WebGPU transcription.');
+          return;
+        }
+      }
+    }
+
+    if (!blob) {
+      alert('No media file loaded to transcribe.');
+      return;
+    }
+
+    const targetAsset: MediaAsset = asset ?? {
+      id: activeMediaId,
+      name: activeClip?.title ?? 'Active Video',
+      type: 'video',
+      duration: asSeconds(15.0),
+      thumbnailUrl: '',
+      isUsedOnTimeline: true,
+    };
+
+    await handleTranscribeMedia(blob, targetAsset);
+  }, [activeMediaId, activeVideoUrl, activeClip, mediaAssets, handleTranscribeMedia]);
+
+  // Real FFmpeg WASM Video Exporter handler
+  const handleStartExport = useCallback(async (
+    exportSettings: ExportSettings,
+    callbacks: { onProgress: (percent: number, stage: string, log?: string) => void }
+  ) => {
+    let blob = fileBlobMapRef.current.get(activeMediaId);
+
+    if (!blob && activeVideoUrl) {
+      callbacks.onProgress(5, 'Fetching media stream for WASM export...');
+      const resp = await fetch(activeVideoUrl);
+      blob = await resp.blob();
+    }
+
+    if (!blob) {
+      throw new Error('No media file available to export.');
+    }
+
+    const result = await exportVideoWithFfmpegWasm(
+      blob,
+      rebuildResult.segments,
+      tokens,
+      {
+        mode: exportSettings.wasmMode === 'stream-copy' ? 'stream-copy' : 'filter-complex-ass',
+        includeSubtitles: true,
+        onProgress: p => {
+          callbacks.onProgress(p.percent, p.stage, p.log);
+        },
+      }
+    );
+
+    // Trigger instant browser download
+    const downloadUrl = URL.createObjectURL(result.outputBlob);
+    const a = document.createElement('a');
+    a.href = downloadUrl;
+    a.download = (exportSettings.title || 'ScarletCut_Export').replace(/[^a-zA-Z0-9_-]/g, '_') + '.mp4';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    setTimeout(() => {
+      URL.revokeObjectURL(downloadUrl);
+    }, 60000);
+  }, [activeMediaId, activeVideoUrl, rebuildResult.segments, tokens]);
 
   // Add marker flag at current playhead
   const handleAddMarker = useCallback(() => {
@@ -849,10 +1030,13 @@ export const App: React.FC = () => {
               tokens={tokens}
               currentTime={currentTime}
               onToggleDeleteToken={handleToggleDeleteToken}
+              onToggleDeleteMultipleTokens={handleToggleDeleteMultipleTokens}
               onPurgeFillers={handlePurgeFillers}
               onRestoreAllTokens={handleRestoreAll}
               onEditTokenText={handleEditTokenText}
               onSeekToTime={handleSeek}
+              onTranscribeCurrentMedia={handleTranscribeCurrentMedia}
+              isTranscribing={isTranscribing}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */
@@ -983,6 +1167,7 @@ export const App: React.FC = () => {
           setIsExportModalOpen(false);
           setIsExportReadyOpen(true);
         }}
+        onStartExport={handleStartExport}
       />
 
       <ExportReadyDialog
@@ -990,6 +1175,101 @@ export const App: React.FC = () => {
         onClose={() => setIsExportReadyOpen(false)}
         outputPath="C:\Users\movavi\Desktop\ScarletCut_Export.mp4"
       />
+
+      {/* Live WebGPU Whisper Transcription Overlay */}
+      {isTranscribing && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 9999,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: '460px',
+              backgroundColor: '#181B20',
+              border: '1px solid #168BFF',
+              borderRadius: '16px',
+              padding: '28px 24px',
+              boxShadow: '0 20px 60px rgba(0, 0, 0, 0.9), 0 0 30px rgba(22, 139, 255, 0.25)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              textAlign: 'center',
+            }}
+          >
+            <div
+              style={{
+                width: '56px',
+                height: '56px',
+                borderRadius: '50%',
+                backgroundColor: 'rgba(22, 139, 255, 0.15)',
+                border: '2px solid #168BFF',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: '16px',
+              }}
+            >
+              <IconSparkles size={28} color="#168BFF" />
+            </div>
+
+            <h3 style={{ margin: '0 0 6px 0', fontSize: '18px', fontWeight: 600, color: '#FFFFFF' }}>
+              Transcribing with WebGPU Whisper
+            </h3>
+            <span style={{ fontSize: '12px', color: '#8A96A6', marginBottom: '16px' }}>
+              {transcribeFileName ? `Processing "${transcribeFileName}"` : 'Processing active media...'}
+            </span>
+
+            {/* Progress Bar */}
+            <div
+              style={{
+                width: '100%',
+                height: '8px',
+                backgroundColor: '#2A313C',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                marginBottom: '12px',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${transcribePercent}%`,
+                  backgroundColor: '#168BFF',
+                  boxShadow: '0 0 10px #168BFF',
+                  transition: 'width 0.2s ease',
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', fontSize: '12px', color: '#A4B0BE' }}>
+              <span>{transcribeStatus}</span>
+              <span style={{ fontWeight: 600, color: '#FFFFFF' }}>{transcribePercent}%</span>
+            </div>
+
+            <span
+              style={{
+                marginTop: '18px',
+                fontSize: '10px',
+                fontFamily: "'JetBrains Mono', monospace",
+                color: '#2ED573',
+                backgroundColor: 'rgba(46, 213, 115, 0.1)',
+                padding: '3px 8px',
+                borderRadius: '4px',
+              }}
+            >
+              100% In-Browser • Zero Server Privacy • WebGPU Accelerated
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Fault Simulator Bar */}
       <FaultSimulatorBar
