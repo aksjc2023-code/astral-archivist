@@ -41,6 +41,7 @@ export interface MultiTrackTimelineProps {
   onAddTrack?: () => void;
   onDeleteMarker?: (markerId: string) => void;
   onEditClipTitle?: (clipId: string, newTitle: string) => void;
+  onClipTransitionDurationChange?: (clipId: string, durationSec: number) => void;
 }
 
 const getClipStart = (c: TimelineClip): number => c.timelineStart ?? c.sourceStart ?? 0;
@@ -72,6 +73,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   onAddTrack,
   onDeleteMarker,
   onEditClipTitle,
+  onClipTransitionDurationChange,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -1196,6 +1198,45 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     </>
                   )}
 
+                  {/* Premiere Pro Cut Transition Pill */}
+                  {clip.transitionIn && (
+                    <div
+                      id={`trans-pill-${clip.id}`}
+                      data-testid={`trans-pill-${clip.id}`}
+                      title={`Transition: ${clip.transitionIn} (${(clip.transitionDuration || 1.2).toFixed(1)}s) - Click to edit duration`}
+                      onClick={e => {
+                        e.stopPropagation();
+                        const curDur = String(clip.transitionDuration || 1.2);
+                        const newDur = prompt(`Set transition duration in seconds (0.3 - 4.0):`, curDur);
+                        if (newDur !== null && !isNaN(Number(newDur))) {
+                          onClipTransitionDurationChange?.(clip.id, Math.max(0.3, Math.min(4.0, Number(newDur))));
+                        }
+                      }}
+                      style={{
+                        position: 'absolute',
+                        left: '0px',
+                        top: '0px',
+                        bottom: '0px',
+                        width: `${Math.max(28, (clip.transitionDuration || 1.2) * pxPerSec)}px`,
+                        backgroundColor: 'rgba(250, 130, 49, 0.88)',
+                        borderRight: '2px solid #FF9F1A',
+                        borderRadius: '6px 0 0 6px',
+                        zIndex: 12,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        boxShadow: '2px 0 8px rgba(0,0,0,0.5)',
+                        overflow: 'hidden',
+                        padding: '0 4px',
+                      }}
+                    >
+                      <span style={{ fontSize: '9px', fontWeight: 800, color: '#FFFFFF', whiteSpace: 'nowrap', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
+                        ][ {clip.transitionIn}
+                      </span>
+                    </div>
+                  )}
+
                   {/* Thumbnail Strip Header */}
                   <div
                     style={{
@@ -1212,29 +1253,44 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                       <span style={{ fontSize: '11px', fontWeight: 600, color: '#FFFFFF', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                         {clip.title}
                       </span>
-                      <span
-                        onClick={e => {
-                          e.stopPropagation();
-                          const newVol = prompt(`Set clip volume % (0 - 200):`, String(clip.volume ?? 100));
-                          if (newVol !== null && !isNaN(Number(newVol))) {
-                            onClipVolumeChange?.(clip.id, Math.max(0, Math.min(200, Number(newVol))));
-                          }
-                        }}
-                        style={{
-                          fontSize: '9px',
-                          backgroundColor: 'rgba(0, 0, 0, 0.45)',
-                          color: '#A4B0BE',
-                          padding: '1px 5px',
-                          borderRadius: '3px',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          flexShrink: 0,
-                          marginLeft: '6px',
-                        }}
-                        title="Click to set clip volume %"
-                      >
-                        {clip.volume !== undefined ? `${clip.volume}%` : '100%'}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                        {clip.filter && clip.filter !== 'none' && (
+                          <span
+                            style={{
+                              fontSize: '9px',
+                              backgroundColor: '#FF9F43',
+                              color: '#000000',
+                              padding: '1px 5px',
+                              borderRadius: '3px',
+                              fontWeight: 700,
+                            }}
+                            title={`Filter: ${clip.filter}`}
+                          >
+                            🎨 {clip.filter}
+                          </span>
+                        )}
+                        <span
+                          onClick={e => {
+                            e.stopPropagation();
+                            const newVol = prompt(`Set clip volume % (0 - 200):`, String(clip.volume ?? 100));
+                            if (newVol !== null && !isNaN(Number(newVol))) {
+                              onClipVolumeChange?.(clip.id, Math.max(0, Math.min(200, Number(newVol))));
+                            }
+                          }}
+                          style={{
+                            fontSize: '9px',
+                            backgroundColor: 'rgba(0, 0, 0, 0.45)',
+                            color: '#A4B0BE',
+                            padding: '1px 5px',
+                            borderRadius: '3px',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                          }}
+                          title="Click to set clip volume %"
+                        >
+                          {clip.volume !== undefined ? `${clip.volume}%` : '100%'}
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -1474,7 +1530,16 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         width: `${Math.max(20, clipDur * pxPerSec)}px`,
                         height: '30px',
                         top: '5px',
-                        backgroundColor: clip.color || '#FFA502',
+                        backgroundColor: (clip.title.startsWith('⚡ ') || (clip as any).isFilter)
+                          ? '#EB3B5A'
+                          : (clip.title.startsWith('⧉ ') || (clip as any).isTransition)
+                          ? '#FA8231'
+                          : clip.color || '#FFA502',
+                        backgroundImage: (clip.title.startsWith('⚡ ') || (clip as any).isFilter)
+                          ? 'linear-gradient(90deg, #EB3B5A, #FA8231)'
+                          : (clip.title.startsWith('⧉ ') || (clip as any).isTransition)
+                          ? 'linear-gradient(90deg, #FA8231, #FF9F1A)'
+                          : undefined,
                         border: isSelected ? '2px solid #00F0FF' : 'none',
                         borderRadius: '6px',
                         display: 'flex',
@@ -1490,7 +1555,54 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         fontWeight: 600,
                       }}
                     >
-                      {clip.title}
+                      {/* Trim Handles for Custom Track Clips (Filter Adjustment Layers & Transitions) */}
+                      {isSelected && !isTrackLocked && (
+                        <>
+                          <div
+                            id={`trim-left-${clip.id}`}
+                            data-testid={`trim-left-${clip.id}`}
+                            role="separator"
+                            aria-label="Trim In-Point (Left handle)"
+                            tabIndex={0}
+                            title="Drag to trim in-point"
+                            onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', trackId)}
+                            style={{
+                              position: 'absolute',
+                              left: '0',
+                              top: '0',
+                              bottom: '0',
+                              width: '7px',
+                              backgroundColor: '#FFD32A',
+                              cursor: 'ew-resize',
+                              zIndex: 10,
+                              borderRadius: '2px 0 0 2px',
+                            }}
+                          />
+                          <div
+                            id={`trim-right-${clip.id}`}
+                            data-testid={`trim-right-${clip.id}`}
+                            role="separator"
+                            aria-label="Trim Out-Point (Right handle)"
+                            tabIndex={0}
+                            title="Drag to trim out-point"
+                            onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', trackId)}
+                            style={{
+                              position: 'absolute',
+                              right: '0',
+                              top: '0',
+                              bottom: '0',
+                              width: '7px',
+                              backgroundColor: '#FFD32A',
+                              cursor: 'ew-resize',
+                              zIndex: 10,
+                              borderRadius: '0 2px 2px 0',
+                            }}
+                          />
+                        </>
+                      )}
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: isSelected ? '4px' : '0' }}>
+                        {clip.title}
+                      </span>
                     </div>
                   );
                 })}

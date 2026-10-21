@@ -34,6 +34,8 @@ import {
   asSeconds,
   AspectRatio,
   synthesizeOverdubWavBytes,
+  TitleClipData,
+  FilterClipData,
 } from '@astral/core';
 
 import {
@@ -263,21 +265,21 @@ export const App: React.FC = () => {
       return (transClip as any).transitionName || transClip.title.replace('⧉ ', '');
     }
 
-    // 2. Check active video clip's transitionIn during entrance window [clipStart, clipStart + 1.2s]
+    // 2. Check active video clip's transitionIn during entrance window [clipStart, clipStart + transitionDuration]
     if (activeClip && activeClip.transitionIn) {
       const clipStart = activeClip.timelineStart ?? activeClip.sourceStart ?? 0;
-      const transitionWindowSec = 1.2;
+      const transitionWindowSec = activeClip.transitionDuration ?? 1.2;
       if (currentTime >= clipStart && currentTime <= clipStart + transitionWindowSec) {
         return activeClip.transitionIn;
       }
     }
 
-    // 3. Check active video clip's transitionOut during exit window [clipEnd - 1.2s, clipEnd]
+    // 3. Check active video clip's transitionOut during exit window [clipEnd - transitionDuration, clipEnd]
     if (activeClip && activeClip.transitionOut) {
       const clipStart = activeClip.timelineStart ?? activeClip.sourceStart ?? 0;
       const clipDur = activeClip.timelineDuration ?? activeClip.duration ?? 0;
       const clipEnd = clipStart + clipDur;
-      const transitionWindowSec = 1.2;
+      const transitionWindowSec = activeClip.transitionDuration ?? 1.2;
       if (currentTime >= clipEnd - transitionWindowSec && currentTime <= clipEnd) {
         return activeClip.transitionOut;
       }
@@ -319,6 +321,82 @@ export const App: React.FC = () => {
     setHistoryStack(prev => [...prev.slice(-25), { tokensByMedia: currentTokensByMedia, clips: currentClips }]);
     setRedoStack([]);
   }, []);
+
+  // Active title data with full isolated state & style preservation
+  const activeTitleData = useMemo<TitleClipData | undefined>(() => {
+    if (!activeTitleClip) return undefined;
+    return activeTitleClip.titleData ?? {
+      text: activeTitleClip.title,
+      stylePreset: activeTitleClip.title,
+      position: { x: 50, y: 80 },
+      fontSize: 22,
+      scale: 1.0,
+      color: '#FFFFFF',
+      alignment: 'center' as const,
+    };
+  }, [activeTitleClip]);
+
+  const handleUpdateTitleData = useCallback((data: Partial<TitleClipData>) => {
+    if (!activeTitleClip) return;
+    pushHistory(tokensByMedia, clips);
+    setClips(prev => prev.map(c => {
+      if (c.id !== activeTitleClip.id) return c;
+      const curData = c.titleData ?? {
+        text: c.title,
+        stylePreset: c.title,
+        position: { x: 50, y: 80 },
+        fontSize: 22,
+        scale: 1.0,
+        color: '#FFFFFF',
+        alignment: 'center' as const,
+      };
+      const updated: TitleClipData = { ...curData, ...data };
+      return {
+        ...c,
+        title: updated.text || c.title,
+        titleData: updated,
+      };
+    }));
+  }, [activeTitleClip, pushHistory, tokensByMedia, clips]);
+
+  const activeFilterClip = useMemo(() => {
+    return clips.find(c => {
+      const isFilter = (c as any).filter || (c as any).isFilter || c.title.startsWith('⚡ ');
+      if (!isFilter || c.trackId === 'track_video') return false;
+      const start = c.timelineStart ?? c.sourceStart ?? 0;
+      const dur = c.timelineDuration ?? c.duration ?? 0;
+      return currentTime >= start && currentTime <= start + dur;
+    });
+  }, [clips, currentTime]);
+
+  const currentFilterIntensity = useMemo(() => {
+    if (activeFilterClip?.filterData?.intensity !== undefined) {
+      return activeFilterClip.filterData.intensity;
+    }
+    if ((activeClip as any)?.filterData?.intensity !== undefined) {
+      return (activeClip as any).filterData.intensity;
+    }
+    return 100;
+  }, [activeFilterClip, activeClip]);
+
+  const handleUpdateFilterIntensity = useCallback((intensity: number) => {
+    if (activeFilterClip) {
+      setClips(prev => prev.map(c => c.id === activeFilterClip.id ? {
+        ...c,
+        filterData: { ...(c.filterData || { filterName: c.filter || 'none' }), intensity }
+      } : c));
+    } else if (activeClip && (activeClip as any).filter) {
+      setClips(prev => prev.map(c => c.id === activeClip.id ? {
+        ...c,
+        filterData: { ...(c.filterData || { filterName: (c as any).filter }), intensity }
+      } : c));
+    }
+  }, [activeFilterClip, activeClip]);
+
+  const handleClipTransitionDurationChange = useCallback((clipId: string, durationSec: number) => {
+    pushHistory(tokensByMedia, clips);
+    setClips(prev => prev.map(c => c.id === clipId ? { ...c, transitionDuration: durationSec } : c));
+  }, [pushHistory, tokensByMedia, clips]);
 
   const handleEditClipTitle = useCallback((clipId: string, newTitle: string) => {
     pushHistory(tokensByMedia, clips);
@@ -821,6 +899,15 @@ export const App: React.FC = () => {
         sourceStart: dropTime,
         duration: dur,
         color: payload.color || '#8854D0',
+        titleData: {
+          text: payload.name,
+          stylePreset: payload.name,
+          position: { x: 50, y: 80 },
+          fontSize: 22,
+          scale: 1.0,
+          color: '#FFFFFF',
+          alignment: 'center',
+        },
       };
       validateTimelineClip(newTitleClip);
       setClips(prev => [...prev, newTitleClip]);
@@ -856,7 +943,7 @@ export const App: React.FC = () => {
           const cDur = c.timelineDuration ?? c.duration ?? 0;
           if (dropTimeSec >= cStart && dropTimeSec <= cStart + cDur) {
             matched = true;
-            return { ...c, transitionIn: payload.name };
+            return { ...c, transitionIn: payload.name, transitionDuration: 1.2 };
           }
           return c;
         });
@@ -866,11 +953,12 @@ export const App: React.FC = () => {
           trackId: targetTrackId.startsWith('track_custom') ? targetTrackId : 'track_custom_stickers',
           title: `⧉ ${payload.name}`,
           timelineStart: dropTime,
-          timelineDuration: asSeconds(2.0),
+          timelineDuration: asSeconds(1.2),
           sourceIn: asSourceSeconds(0),
-          sourceOut: asSourceSeconds(2.0),
+          sourceOut: asSourceSeconds(1.2),
           sourceStart: dropTime,
-          duration: asSeconds(2.0),
+          duration: asSeconds(1.2),
+          transitionDuration: 1.2,
           color: '#FA8231',
         };
         (newTransClip as any).isTransition = true;
@@ -888,7 +976,11 @@ export const App: React.FC = () => {
           const cDur = c.timelineDuration ?? c.duration ?? 0;
           if (dropTimeSec >= cStart && dropTimeSec <= cStart + cDur) {
             matched = true;
-            return { ...c, filter: payload.name } as any;
+            return {
+              ...c,
+              filter: payload.name,
+              filterData: { filterName: payload.name, intensity: 100 }
+            } as any;
           }
           return c;
         });
@@ -904,6 +996,8 @@ export const App: React.FC = () => {
           sourceStart: dropTime,
           duration: asSeconds(4.0),
           color: '#EB3B5A',
+          filter: payload.name,
+          filterData: { filterName: payload.name, intensity: 100 },
         };
         (newFilterClip as any).isFilter = true;
         (newFilterClip as any).filter = payload.name;
@@ -1466,7 +1560,11 @@ export const App: React.FC = () => {
       setActiveFilter(effectName);
       const targetId = selectedClipId || activeClip?.id;
       if (targetId) {
-        setClips(prev => prev.map(c => c.id === targetId ? ({ ...c, filter: effectName } as any) : c));
+        setClips(prev => prev.map(c => c.id === targetId ? ({
+          ...c,
+          filter: effectName,
+          filterData: { filterName: effectName, intensity: 100 }
+        } as any) : c));
       } else {
         const newFilterClip: TimelineClip = {
           id: `filter_${Date.now()}`,
@@ -1479,6 +1577,8 @@ export const App: React.FC = () => {
           sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
           duration: asSeconds(4.0),
           color: '#EB3B5A',
+          filter: effectName,
+          filterData: { filterName: effectName, intensity: 100 },
         };
         (newFilterClip as any).isFilter = true;
         (newFilterClip as any).filter = effectName;
@@ -1499,6 +1599,15 @@ export const App: React.FC = () => {
         sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
         duration: asSeconds(4.0),
         color: '#8854D0',
+        titleData: {
+          text: effectName,
+          stylePreset: effectName,
+          position: { x: 50, y: 80 },
+          fontSize: 22,
+          scale: 1.0,
+          color: '#FFFFFF',
+          alignment: 'center',
+        },
       };
       validateTimelineClip(newTitleClip);
       setClips(prev => [...prev, newTitleClip]);
@@ -1507,7 +1616,12 @@ export const App: React.FC = () => {
       pushHistory(tokensByMedia, clips);
       const targetId = selectedClipId || activeClip?.id;
       if (targetId) {
-        setClips(prev => prev.map(c => c.id === targetId ? { ...c, transitionIn: effectName, transitionOut: effectName } : c));
+        setClips(prev => prev.map(c => c.id === targetId ? {
+          ...c,
+          transitionIn: effectName,
+          transitionOut: effectName,
+          transitionDuration: 1.2
+        } : c));
       }
       setActiveTransition(effectName);
     } else if (activeDockTab === 'stickers') {
@@ -1917,11 +2031,16 @@ export const App: React.FC = () => {
             onPlaybackSpeedChange={setPlaybackSpeed}
             rotationAngle={rotationAngle}
             activeFilter={currentFilter}
+            activeFilterIntensity={currentFilterIntensity}
+            onUpdateFilterIntensity={handleUpdateFilterIntensity}
             colorAdjustments={toolSettings.colorAdjustments}
             toolSettings={toolSettings}
             activeTitle={activeTitleClip?.title}
+            activeTitleData={activeTitleData}
+            onUpdateTitleData={handleUpdateTitleData}
             activeSticker={activeStickerClip ? activeStickerClip.title.replace(/^★\s*/, '') : undefined}
             activeTransition={currentTransition}
+            activeTransitionDuration={activeClip?.transitionDuration || 1.2}
             onEditActiveTitle={handleEditActiveTitle}
             onClearActiveTitle={() => {
               setActiveTitlePreset(undefined);
@@ -2034,6 +2153,7 @@ export const App: React.FC = () => {
           onAddTrack={handleAddTrack}
           onDeleteMarker={markerId => setMarkers(prev => prev.filter(m => m.id !== markerId))}
           onEditClipTitle={handleEditClipTitle}
+          onClipTransitionDurationChange={handleClipTransitionDurationChange}
         />
 
         {/* Bottom Status Footer (28px Height) */}

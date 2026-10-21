@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { WordToken, ToolSettings, formatTimecode, AspectRatio } from '@astral/core';
+import { WordToken, ToolSettings, formatTimecode, AspectRatio, TitleClipData, FilterClipData } from '@astral/core';
 import {
   IconPlay,
   IconPause,
@@ -37,11 +37,16 @@ export interface VideoPreviewMonitorProps {
   onPlaybackSpeedChange?: (speed: number) => void;
   rotationAngle?: number;
   activeFilter?: string;
+  activeFilterIntensity?: number;
+  onUpdateFilterIntensity?: (intensity: number) => void;
   colorAdjustments?: ToolSettings['colorAdjustments'];
   toolSettings?: ToolSettings;
   activeTitle?: string;
+  activeTitleData?: TitleClipData;
+  onUpdateTitleData?: (data: Partial<TitleClipData>) => void;
   activeSticker?: string;
   activeTransition?: string;
+  activeTransitionDuration?: number;
   onEditActiveTitle?: () => void;
   onClearActiveFilter?: () => void;
   trackStates?: Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean; volume?: number }>;
@@ -83,11 +88,16 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onPlaybackSpeedChange,
   rotationAngle = 0,
   activeFilter = 'none',
+  activeFilterIntensity = 100,
+  onUpdateFilterIntensity,
   colorAdjustments,
   toolSettings,
   activeTitle,
+  activeTitleData,
+  onUpdateTitleData,
   activeSticker,
   activeTransition,
+  activeTransitionDuration = 1.2,
   onEditActiveTitle,
   onClearActiveFilter,
   trackStates,
@@ -206,6 +216,82 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const stageContainerRef = useRef<HTMLDivElement>(null);
+
+  // Title Gizmo state (Premiere Pro Essential Graphics On-Monitor Controls)
+  const [isTitleGizmoActive, setIsTitleGizmoActive] = useState(false);
+  const [showFilterAdjuster, setShowFilterAdjuster] = useState(false);
+
+  // Fallback internal title state if not controlled by parent
+  const [internalTitlePos, setInternalTitlePos] = useState<{ x: number; y: number }>({ x: 50, y: 80 });
+  const [internalTitleScale, setInternalTitleScale] = useState(1.0);
+  const [internalTitleFontSize, setInternalTitleFontSize] = useState(22);
+
+  const titlePosX = activeTitleData?.position?.x ?? internalTitlePos.x;
+  const titlePosY = activeTitleData?.position?.y ?? internalTitlePos.y;
+  const titleScale = activeTitleData?.scale ?? internalTitleScale;
+  const titleFontSize = activeTitleData?.fontSize ?? internalTitleFontSize;
+  const titleText = activeTitleData?.text ?? activeTitle ?? '';
+  const titlePreset = activeTitleData?.stylePreset || activeTitle || 'Cinematic Trailer';
+
+  const handleTitlePointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const stage = stageContainerRef.current;
+    if (!stage) return;
+
+    const startClientX = e.clientX;
+    const startClientY = e.clientY;
+    const initX = titlePosX;
+    const initY = titlePosY;
+
+    const handlePointerMove = (moveEvt: PointerEvent) => {
+      const rect = stage.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const deltaXPercent = ((moveEvt.clientX - startClientX) / rect.width) * 100;
+      const deltaYPercent = ((moveEvt.clientY - startClientY) / rect.height) * 100;
+      const nextX = Math.max(5, Math.min(95, Number((initX + deltaXPercent).toFixed(1))));
+      const nextY = Math.max(5, Math.min(95, Number((initY + deltaYPercent).toFixed(1))));
+
+      if (onUpdateTitleData) {
+        onUpdateTitleData({ position: { x: nextX, y: nextY } });
+      } else {
+        setInternalTitlePos({ x: nextX, y: nextY });
+      }
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
+
+  const handleTitleCornerResizeDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startClientX = e.clientX;
+    const initScale = titleScale;
+
+    const handlePointerMove = (moveEvt: PointerEvent) => {
+      const deltaX = moveEvt.clientX - startClientX;
+      const nextScale = Math.max(0.5, Math.min(3.0, Number((initScale + deltaX * 0.01).toFixed(2))));
+      if (onUpdateTitleData) {
+        onUpdateTitleData({ scale: nextScale });
+      } else {
+        setInternalTitleScale(nextScale);
+      }
+    };
+
+    const handlePointerUp = () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+  };
 
   // Robust ref-backed seek coordinator with generation and target verification
   const isSeekingRef = useRef(false);
@@ -475,19 +561,20 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
       }
     }
     if (activeFilter && activeFilter !== 'none') {
-      if (activeFilter === 'Retro Film') parts.push('sepia(0.6) contrast(1.15) brightness(0.95)');
-      else if (activeFilter === 'Cyberpunk Neon') parts.push('hue-rotate(180deg) saturate(2.5) contrast(1.3)');
-      else if (activeFilter === 'Golden Sunset') parts.push('sepia(0.4) saturate(1.8) hue-rotate(-20deg)');
-      else if (activeFilter === 'Moody B&W') parts.push('grayscale(1) contrast(1.4)');
-      else if (activeFilter === 'VHS Distortion') parts.push('contrast(1.5) hue-rotate(90deg)');
-      else if (activeFilter === 'Teal & Orange') parts.push('saturate(2) contrast(1.2) hue-rotate(30deg)');
-      else if (activeFilter === 'Soft Bloom') parts.push('brightness(1.1) contrast(0.9) saturate(1.2)');
-      else if (activeFilter === 'Featured Punch') parts.push('contrast(1.35) saturate(1.4)');
-      else if (activeFilter === 'RGB Split') parts.push('contrast(1.4) hue-rotate(45deg) saturate(1.8)');
-      else if (activeFilter === 'Noir Fade') parts.push('grayscale(0.85) contrast(1.2) brightness(0.9)');
-      else if (activeFilter === 'Polaroid Warm') parts.push('sepia(0.45) saturate(1.3) contrast(1.05)');
-      else if (activeFilter === 'Motion Blur Soft') parts.push('blur(0.6px) brightness(1.05)');
-      else parts.push('contrast(1.15) saturate(1.2)');
+      const factor = (activeFilterIntensity ?? 100) / 100;
+      if (activeFilter === 'Retro Film') parts.push(`sepia(${0.6 * factor}) contrast(${1 + 0.15 * factor}) brightness(${1 - 0.05 * factor})`);
+      else if (activeFilter === 'Cyberpunk Neon') parts.push(`hue-rotate(${180 * factor}deg) saturate(${1 + 1.5 * factor}) contrast(${1 + 0.3 * factor})`);
+      else if (activeFilter === 'Golden Sunset') parts.push(`sepia(${0.4 * factor}) saturate(${1 + 0.8 * factor}) hue-rotate(${-20 * factor}deg)`);
+      else if (activeFilter === 'Moody B&W') parts.push(`grayscale(${1 * factor}) contrast(${1 + 0.4 * factor})`);
+      else if (activeFilter === 'VHS Distortion') parts.push(`contrast(${1 + 0.5 * factor}) hue-rotate(${90 * factor}deg)`);
+      else if (activeFilter === 'Teal & Orange') parts.push(`saturate(${1 + 1 * factor}) contrast(${1 + 0.2 * factor}) hue-rotate(${30 * factor}deg)`);
+      else if (activeFilter === 'Soft Bloom') parts.push(`brightness(${1 + 0.1 * factor}) contrast(${1 - 0.1 * factor}) saturate(${1 + 0.2 * factor})`);
+      else if (activeFilter === 'Featured Punch') parts.push(`contrast(${1 + 0.35 * factor}) saturate(${1 + 0.4 * factor})`);
+      else if (activeFilter === 'RGB Split') parts.push(`contrast(${1 + 0.4 * factor}) hue-rotate(${45 * factor}deg) saturate(${1 + 0.8 * factor})`);
+      else if (activeFilter === 'Noir Fade') parts.push(`grayscale(${0.85 * factor}) contrast(${1 + 0.2 * factor}) brightness(${1 - 0.1 * factor})`);
+      else if (activeFilter === 'Polaroid Warm') parts.push(`sepia(${0.45 * factor}) saturate(${1 + 0.3 * factor}) contrast(${1 + 0.05 * factor})`);
+      else if (activeFilter === 'Motion Blur Soft') parts.push(`blur(${0.6 * factor}px) brightness(${1 + 0.05 * factor})`);
+      else parts.push(`contrast(${1 + 0.15 * factor}) saturate(${1 + 0.2 * factor})`);
     }
     // Chroma key approximation: boost key channel + slight blur on edges when enabled
     const chroma = toolSettings?.chromaKey;
@@ -504,7 +591,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
       if (noise > 0.05) parts.push(`contrast(${1 + noise})`);
     }
     return parts.length > 0 ? parts.join(' ') : 'none';
-  }, [colorAdjustments, activeFilter, toolSettings?.chromaKey]);
+  }, [colorAdjustments, activeFilter, activeFilterIntensity, toolSettings?.chromaKey]);
 
   // Compute live motion preset transform from Animation tool tab
   const computedMotionTransform = useMemo(() => {
@@ -1011,7 +1098,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             </div>
           )}
 
-          {/* Active Filter Indicator Badge with 1-Click Clear */}
+          {/* Active Filter Indicator Badge with Live Intensity Slider & 1-Click Clear */}
           {activeFilter && activeFilter !== 'none' && (
             <div
               id="overlay-active-filter"
@@ -1021,20 +1108,103 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 top: activeTransition ? '52px' : '16px',
                 right: '16px',
                 zIndex: 27,
-                backgroundColor: 'rgba(20, 24, 33, 0.92)',
+                backgroundColor: 'rgba(20, 24, 33, 0.95)',
                 border: '1px solid #FF9F43',
                 borderRadius: '8px',
-                padding: '4px 10px',
+                padding: '5px 12px',
                 color: '#FF9F43',
                 fontSize: '11px',
                 fontWeight: 700,
-                boxShadow: '0 4px 16px rgba(255, 159, 67, 0.4)',
+                boxShadow: '0 4px 16px rgba(255, 159, 67, 0.45)',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
               }}
             >
-              <span>🎨 {activeFilter}</span>
+              <span
+                id="btn-toggle-filter-adjuster"
+                data-testid="btn-toggle-filter-adjuster"
+                onClick={e => {
+                  e.stopPropagation();
+                  setShowFilterAdjuster(prev => !prev);
+                }}
+                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}
+                title="Click to adjust filter intensity"
+              >
+                <span>🎨 {activeFilter}</span>
+                <span style={{ fontSize: '10px', backgroundColor: 'rgba(255, 159, 67, 0.2)', padding: '1px 5px', borderRadius: '4px' }}>
+                  {activeFilterIntensity ?? 100}%
+                </span>
+              </span>
+
+              {showFilterAdjuster && (
+                <div
+                  id="popover-filter-adjuster"
+                  data-testid="popover-filter-adjuster"
+                  onClick={e => e.stopPropagation()}
+                  style={{
+                    position: 'absolute',
+                    top: '36px',
+                    right: '0px',
+                    backgroundColor: '#1E232B',
+                    border: '1px solid #FF9F43',
+                    borderRadius: '8px',
+                    padding: '12px 14px',
+                    boxShadow: '0 8px 28px rgba(0,0,0,0.85)',
+                    width: '200px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    zIndex: 35,
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: '#A4B0BE' }}>
+                    <span style={{ fontWeight: 600 }}>Filter Intensity</span>
+                    <span style={{ fontWeight: 700, color: '#FF9F43' }}>{activeFilterIntensity ?? 100}%</span>
+                  </div>
+                  <input
+                    id="slider-filter-intensity"
+                    data-testid="slider-filter-intensity"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={activeFilterIntensity ?? 100}
+                    onChange={e => onUpdateFilterIntensity?.(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: '#FF9F43', cursor: 'pointer' }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6px' }}>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateFilterIntensity?.(25)}
+                      style={{ flex: 1, fontSize: '10px', backgroundColor: '#2A3548', color: '#FFFFFF', border: 'none', borderRadius: '4px', padding: '3px 0', cursor: 'pointer' }}
+                    >
+                      25%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateFilterIntensity?.(50)}
+                      style={{ flex: 1, fontSize: '10px', backgroundColor: '#2A3548', color: '#FFFFFF', border: 'none', borderRadius: '4px', padding: '3px 0', cursor: 'pointer' }}
+                    >
+                      50%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateFilterIntensity?.(75)}
+                      style={{ flex: 1, fontSize: '10px', backgroundColor: '#2A3548', color: '#FFFFFF', border: 'none', borderRadius: '4px', padding: '3px 0', cursor: 'pointer' }}
+                    >
+                      75%
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onUpdateFilterIntensity?.(100)}
+                      style={{ flex: 1, fontSize: '10px', backgroundColor: '#FF9F43', color: '#000000', fontWeight: 700, border: 'none', borderRadius: '4px', padding: '3px 0', cursor: 'pointer' }}
+                    >
+                      100%
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {onClearActiveFilter && (
                 <button
                   type="button"
@@ -1043,6 +1213,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                   title="Remove filter"
                   onClick={e => {
                     e.stopPropagation();
+                    setShowFilterAdjuster(false);
                     onClearActiveFilter();
                   }}
                   style={{
@@ -1060,145 +1231,287 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             </div>
           )}
 
-          {/* Active Title & Caption Overlay on Monitor Stage */}
+          {/* Active Title Overlay with Interactive Transform Gizmo & Essential Graphics Isolation */}
           {activeTitle && !isTitleTrackHidden && (
             <div
               id="overlay-active-title"
-              onClick={onEditActiveTitle}
+              data-testid="overlay-active-title"
+              onClick={e => {
+                e.stopPropagation();
+                setIsTitleGizmoActive(prev => !prev);
+                onEditActiveTitle?.();
+              }}
+              onPointerDown={handleTitlePointerDown}
               style={{
                 position: 'absolute',
-                zIndex: 25,
-                cursor: 'pointer',
-                transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
-                ...(activeTitle.toLowerCase().includes('typewriter')
-                  ? {
-                      bottom: '50px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(10, 15, 25, 0.92)',
-                      border: '2px solid #168BFF',
-                      borderRadius: '8px',
-                      padding: '10px 24px',
-                      color: '#00F0FF',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '15px',
-                      fontWeight: 700,
-                      letterSpacing: '1px',
-                      boxShadow: '0 0 25px rgba(22, 139, 255, 0.65)',
-                    }
-                  : activeTitle.toLowerCase().includes('cinematic') || activeTitle.toLowerCase().includes('epic')
-                  ? {
-                      bottom: '60px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(0, 0, 0, 0.82)',
-                      borderTop: '2px solid #FFD700',
-                      borderBottom: '2px solid #FFD700',
-                      padding: '12px 36px',
-                      color: '#FFD700',
-                      fontFamily: "'Times New Roman', Times, serif",
-                      fontSize: '18px',
-                      fontWeight: 700,
-                      letterSpacing: '5px',
-                      textTransform: 'uppercase' as const,
-                      boxShadow: '0 0 35px rgba(255, 215, 0, 0.45)',
-                      textShadow: '0 2px 10px rgba(0,0,0,0.9), 0 0 20px rgba(255, 215, 0, 0.8)',
-                    }
-                  : activeTitle.toLowerCase().includes('news') || activeTitle.toLowerCase().includes('lower')
-                  ? {
-                      bottom: '36px',
-                      left: '30px',
-                      display: 'flex',
-                      alignItems: 'stretch',
-                      borderRadius: '6px',
-                      overflow: 'hidden',
-                      boxShadow: '0 8px 30px rgba(0,0,0,0.85)',
-                    }
-                  : activeTitle.toLowerCase().includes('social') || activeTitle.toLowerCase().includes('subscribe')
-                  ? {
-                      bottom: '50px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      backgroundColor: '#FF0000',
-                      borderRadius: '9999px',
-                      padding: '8px 22px',
-                      color: '#FFFFFF',
-                      fontWeight: 800,
-                      fontSize: '14px',
-                      boxShadow: '0 6px 20px rgba(255, 0, 0, 0.55)',
-                    }
-                  : activeTitle.toLowerCase().includes('karaoke')
-                  ? {
-                      bottom: '48px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      background: 'linear-gradient(135deg, rgba(46, 213, 115, 0.95), rgba(0, 206, 201, 0.95))',
-                      borderRadius: '12px',
-                      padding: '10px 28px',
-                      color: '#FFFFFF',
-                      fontSize: '16px',
-                      fontWeight: 800,
-                      boxShadow: '0 0 30px rgba(46, 213, 115, 0.7)',
-                    }
-                  : activeTitle.toLowerCase().includes('chapter') || activeTitle.toLowerCase().includes('vlog')
-                  ? {
-                      top: '24px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(20, 24, 33, 0.9)',
-                      border: '1px solid #00D2D3',
-                      borderRadius: '6px',
-                      padding: '6px 18px',
-                      color: '#00D2D3',
-                      fontFamily: "'JetBrains Mono', monospace",
-                      fontSize: '12px',
-                      fontWeight: 700,
-                      letterSpacing: '1.5px',
-                    }
-                  : {
-                      bottom: '48px',
-                      left: '50%',
-                      transform: 'translateX(-50%)',
-                      backgroundColor: 'rgba(22, 27, 36, 0.88)',
-                      backdropFilter: 'blur(16px)',
-                      border: '1px solid #8854D0',
-                      borderRadius: '8px',
-                      padding: '8px 24px',
-                      color: '#FFFFFF',
-                      fontSize: '14px',
-                      fontWeight: 600,
-                      letterSpacing: '0.5px',
-                      boxShadow: '0 8px 24px rgba(136, 84, 208, 0.45)',
-                    }),
+                left: `${titlePosX}%`,
+                top: `${titlePosY}%`,
+                transform: `translate(-50%, -50%) scale(${titleScale})`,
+                fontSize: `${titleFontSize}px`,
+                zIndex: 26,
+                cursor: 'move',
+                userSelect: 'none',
+                transition: 'border 0.15s ease, box-shadow 0.15s ease',
+                outline: isTitleGizmoActive ? '2px dashed #00F0FF' : 'none',
+                outlineOffset: '6px',
+                boxShadow: isTitleGizmoActive ? '0 0 20px rgba(0, 240, 255, 0.45)' : 'none',
               }}
-              title="Click to edit Title text"
+              title="Drag to reposition, Click to toggle Transform Gizmo"
             >
-              {activeTitle.toLowerCase().includes('news') || activeTitle.toLowerCase().includes('lower') ? (
+              {/* Floating Premiere Pro Essential Graphics On-Monitor HUD Toolbar */}
+              {isTitleGizmoActive && (
+                <div
+                  id="hud-title-transform-controls"
+                  data-testid="hud-title-transform-controls"
+                  onClick={e => e.stopPropagation()}
+                  onPointerDown={e => e.stopPropagation()}
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 14px)',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    backgroundColor: '#1E232B',
+                    border: '1px solid #00F0FF',
+                    borderRadius: '8px',
+                    padding: '6px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.85)',
+                    whiteSpace: 'nowrap',
+                    zIndex: 40,
+                    cursor: 'default',
+                  }}
+                >
+                  {/* Direct Text Input Editor (Preserves stylePreset!) */}
+                  <input
+                    id="input-gizmo-title-text"
+                    data-testid="input-gizmo-title-text"
+                    type="text"
+                    value={titleText}
+                    onChange={e => {
+                      const newTxt = e.target.value;
+                      if (onUpdateTitleData) {
+                        onUpdateTitleData({ text: newTxt });
+                      }
+                    }}
+                    placeholder="Enter title text..."
+                    style={{
+                      backgroundColor: '#12151A',
+                      border: '1px solid #35435B',
+                      borderRadius: '4px',
+                      color: '#FFFFFF',
+                      padding: '3px 8px',
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      width: '130px',
+                      outline: 'none',
+                    }}
+                  />
+
+                  {/* Font Size Steppers */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '3px', backgroundColor: '#12151A', borderRadius: '4px', padding: '2px 5px', border: '1px solid #35435B' }}>
+                    <button
+                      type="button"
+                      id="btn-gizmo-font-minus"
+                      data-testid="btn-gizmo-font-minus"
+                      title="Decrease Font Size"
+                      onClick={() => {
+                        const nextSize = Math.max(12, titleFontSize - 2);
+                        if (onUpdateTitleData) onUpdateTitleData({ fontSize: nextSize });
+                        else setInternalTitleFontSize(nextSize);
+                      }}
+                      style={{ background: 'none', border: 'none', color: '#00F0FF', cursor: 'pointer', fontWeight: 800, fontSize: '12px', padding: '0 3px' }}
+                    >
+                      -
+                    </button>
+                    <span style={{ fontSize: '10px', color: '#A4B0BE', minWidth: '22px', textAlign: 'center' }}>
+                      {titleFontSize}px
+                    </span>
+                    <button
+                      type="button"
+                      id="btn-gizmo-font-plus"
+                      data-testid="btn-gizmo-font-plus"
+                      title="Increase Font Size"
+                      onClick={() => {
+                        const nextSize = Math.min(64, titleFontSize + 2);
+                        if (onUpdateTitleData) onUpdateTitleData({ fontSize: nextSize });
+                        else setInternalTitleFontSize(nextSize);
+                      }}
+                      style={{ background: 'none', border: 'none', color: '#00F0FF', cursor: 'pointer', fontWeight: 800, fontSize: '12px', padding: '0 3px' }}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Scale Slider */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '10px', color: '#A4B0BE' }}>
+                    <span>Scale:</span>
+                    <input
+                      id="slider-gizmo-scale"
+                      data-testid="slider-gizmo-scale"
+                      type="range"
+                      min="0.5"
+                      max="2.5"
+                      step="0.05"
+                      value={titleScale}
+                      onChange={e => {
+                        const nextScale = Number(e.target.value);
+                        if (onUpdateTitleData) onUpdateTitleData({ scale: nextScale });
+                        else setInternalTitleScale(nextScale);
+                      }}
+                      style={{ width: '60px', accentColor: '#00F0FF', cursor: 'pointer' }}
+                    />
+                    <span style={{ minWidth: '24px', fontWeight: 700, color: '#00F0FF' }}>{titleScale.toFixed(1)}x</span>
+                  </div>
+
+                  {/* Reset Position Button */}
+                  <button
+                    type="button"
+                    title="Center Title"
+                    onClick={() => {
+                      if (onUpdateTitleData) onUpdateTitleData({ position: { x: 50, y: 80 }, scale: 1.0 });
+                      else {
+                        setInternalTitlePos({ x: 50, y: 80 });
+                        setInternalTitleScale(1.0);
+                      }
+                    }}
+                    style={{
+                      backgroundColor: '#2A3548',
+                      color: '#FFFFFF',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '3px 7px',
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Center
+                  </button>
+
+                  {/* Close Gizmo HUD */}
+                  <button
+                    type="button"
+                    id="btn-close-title-gizmo"
+                    data-testid="btn-close-title-gizmo"
+                    title="Done editing transform"
+                    onClick={() => setIsTitleGizmoActive(false)}
+                    style={{
+                      backgroundColor: '#00F0FF',
+                      color: '#000000',
+                      border: 'none',
+                      borderRadius: '4px',
+                      padding: '3px 8px',
+                      fontSize: '10px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✓
+                  </button>
+                </div>
+              )}
+
+              {/* 4 Corner Scale Handles */}
+              {isTitleGizmoActive && (
                 <>
+                  <div
+                    onPointerDown={handleTitleCornerResizeDown}
+                    style={{
+                      position: 'absolute',
+                      top: '-10px',
+                      left: '-10px',
+                      width: '10px',
+                      height: '10px',
+                      backgroundColor: '#00F0FF',
+                      border: '1px solid #FFFFFF',
+                      cursor: 'nwse-resize',
+                      zIndex: 35,
+                    }}
+                  />
+                  <div
+                    onPointerDown={handleTitleCornerResizeDown}
+                    style={{
+                      position: 'absolute',
+                      top: '-10px',
+                      right: '-10px',
+                      width: '10px',
+                      height: '10px',
+                      backgroundColor: '#00F0FF',
+                      border: '1px solid #FFFFFF',
+                      cursor: 'nesw-resize',
+                      zIndex: 35,
+                    }}
+                  />
+                  <div
+                    onPointerDown={handleTitleCornerResizeDown}
+                    style={{
+                      position: 'absolute',
+                      bottom: '-10px',
+                      left: '-10px',
+                      width: '10px',
+                      height: '10px',
+                      backgroundColor: '#00F0FF',
+                      border: '1px solid #FFFFFF',
+                      cursor: 'nesw-resize',
+                      zIndex: 35,
+                    }}
+                  />
+                  <div
+                    onPointerDown={handleTitleCornerResizeDown}
+                    style={{
+                      position: 'absolute',
+                      bottom: '-10px',
+                      right: '-10px',
+                      width: '10px',
+                      height: '10px',
+                      backgroundColor: '#00F0FF',
+                      border: '1px solid #FFFFFF',
+                      cursor: 'nwse-resize',
+                      zIndex: 35,
+                    }}
+                  />
+                </>
+              )}
+
+              {/* Preset-Specific Visual Typography (Uses titlePreset so styles are NEVER lost!) */}
+              {titlePreset.toLowerCase().includes('news') || titlePreset.toLowerCase().includes('lower') ? (
+                <div style={{ display: 'flex', alignItems: 'stretch', borderRadius: '6px', overflow: 'hidden', boxShadow: '0 8px 30px rgba(0,0,0,0.85)' }}>
                   <div style={{ backgroundColor: '#E74C3C', color: '#FFFFFF', padding: '10px 14px', fontWeight: 900, fontSize: '12px', display: 'flex', alignItems: 'center', gap: '6px', letterSpacing: '1px' }}>
                     <span style={{ width: '8px', height: '8px', backgroundColor: '#FFFFFF', borderRadius: '50%', display: 'inline-block' }} />
                     LIVE
                   </div>
-                  <div style={{ backgroundColor: 'rgba(10, 25, 47, 0.95)', color: '#FFFFFF', padding: '10px 20px', fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
-                    {activeTitle}
+                  <div style={{ backgroundColor: 'rgba(10, 25, 47, 0.95)', color: '#FFFFFF', padding: '10px 20px', fontWeight: 700, display: 'flex', alignItems: 'center' }}>
+                    {titleText}
                   </div>
-                </>
-              ) : activeTitle.toLowerCase().includes('social') || activeTitle.toLowerCase().includes('subscribe') ? (
-                <>
+                </div>
+              ) : titlePreset.toLowerCase().includes('social') || titlePreset.toLowerCase().includes('subscribe') ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#FF0000', borderRadius: '9999px', padding: '8px 22px', color: '#FFFFFF', fontWeight: 800, boxShadow: '0 6px 20px rgba(255, 0, 0, 0.55)' }}>
                   <span style={{ fontSize: '16px' }}>▶</span>
-                  <span>{activeTitle.toUpperCase()}</span>
+                  <span>{titleText.toUpperCase()}</span>
                   <span style={{ fontSize: '16px' }}>🔔</span>
-                </>
-              ) : activeTitle.toLowerCase().includes('typewriter') ? (
-                <>
-                  <span>{activeTitle}</span>
+                </div>
+              ) : titlePreset.toLowerCase().includes('typewriter') ? (
+                <div style={{ backgroundColor: 'rgba(10, 15, 25, 0.92)', border: '2px solid #168BFF', borderRadius: '8px', padding: '10px 24px', color: '#00F0FF', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: '1px', boxShadow: '0 0 25px rgba(22, 139, 255, 0.65)' }}>
+                  <span>{titleText}</span>
                   <span style={{ animation: 'scarletCursorBlink 0.8s infinite', marginLeft: '3px', color: '#00F0FF' }}>_</span>
-                </>
+                </div>
+              ) : titlePreset.toLowerCase().includes('cinematic') || titlePreset.toLowerCase().includes('epic') ? (
+                <div style={{ backgroundColor: 'rgba(0, 0, 0, 0.85)', borderTop: '2px solid #FFD700', borderBottom: '2px solid #FFD700', padding: '12px 36px', color: '#FFD700', fontFamily: "'Times New Roman', Times, serif", fontWeight: 700, letterSpacing: '5px', textTransform: 'uppercase', boxShadow: '0 0 35px rgba(255, 215, 0, 0.45)', textShadow: '0 2px 10px rgba(0,0,0,0.9), 0 0 20px rgba(255, 215, 0, 0.8)' }}>
+                  {titleText}
+                </div>
+              ) : titlePreset.toLowerCase().includes('karaoke') ? (
+                <div style={{ background: 'linear-gradient(135deg, rgba(46, 213, 115, 0.95), rgba(0, 206, 201, 0.95))', borderRadius: '12px', padding: '10px 28px', color: '#FFFFFF', fontWeight: 800, boxShadow: '0 0 30px rgba(46, 213, 115, 0.7)' }}>
+                  {titleText}
+                </div>
+              ) : titlePreset.toLowerCase().includes('chapter') || titlePreset.toLowerCase().includes('vlog') ? (
+                <div style={{ backgroundColor: 'rgba(20, 24, 33, 0.9)', border: '1px solid #00D2D3', borderRadius: '6px', padding: '6px 18px', color: '#00D2D3', fontFamily: "'JetBrains Mono', monospace", fontWeight: 700, letterSpacing: '1.5px' }}>
+                  {titleText}
+                </div>
               ) : (
-                activeTitle
+                <div style={{ backgroundColor: 'rgba(22, 27, 36, 0.88)', backdropFilter: 'blur(16px)', border: '1px solid #8854D0', borderRadius: '8px', padding: '8px 24px', color: '#FFFFFF', fontWeight: 600, letterSpacing: '0.5px', boxShadow: '0 8px 24px rgba(136, 84, 208, 0.45)' }}>
+                  {titleText}
+                </div>
               )}
 
               {onClearActiveTitle && (
@@ -1211,20 +1524,21 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                   }}
                   style={{
                     position: 'absolute',
-                    top: '-8px',
-                    right: '-8px',
+                    top: '-12px',
+                    right: '-12px',
                     backgroundColor: '#FF4757',
                     border: 'none',
                     color: '#FFFFFF',
                     borderRadius: '50%',
-                    width: '18px',
-                    height: '18px',
+                    width: '20px',
+                    height: '20px',
                     cursor: 'pointer',
-                    fontSize: '10px',
-                    lineHeight: '18px',
+                    fontSize: '11px',
+                    lineHeight: '20px',
                     textAlign: 'center',
                     padding: 0,
                     boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+                    zIndex: 35,
                   }}
                 >
                   ✕

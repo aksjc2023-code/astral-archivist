@@ -60,6 +60,26 @@ export interface MediaAsset {
   fileSizeMb?: number;
 }
 
+export interface TitleClipData {
+  text: string;
+  stylePreset: string; // 'Minimal Modern' | 'Typewriter Pop' | 'Karaoke Glow' | 'Cinematic Trailer' | 'Social Subscribe' | 'Vlog Chapter Marker' | 'Lower Third News' | 'Epic Serif Open'
+  position: { x: number; y: number }; // percentage 0 - 100
+  fontSize: number; // in px
+  scale: number; // 0.5 - 3.0
+  color: string;
+  backgroundColor?: string;
+  alignment: 'left' | 'center' | 'right';
+  opacity?: number;
+}
+
+export interface FilterClipData {
+  filterName: string;
+  intensity?: number; // 0 - 100 percentage
+  warmth?: number;
+  contrast?: number;
+  saturation?: number;
+}
+
 export interface TimelineClip {
   id: string;
   trackId: string;
@@ -76,7 +96,11 @@ export interface TimelineClip {
   hasWaveform?: boolean;
   transitionIn?: string;
   transitionOut?: string;
-  volume?: number; // Volume percentage (0 - 200, default 100)
+  transitionDuration?: number;      // Transition duration in seconds (default 1.2)
+  filter?: string;                  // Active filter preset name
+  volume?: number;                  // Volume percentage (0 - 200, default 100)
+  titleData?: TitleClipData;        // Isolated per-clip title styling & positioning
+  filterData?: FilterClipData;      // Isolated per-clip filter parameters & intensity
 
   /** @deprecated Compatibility alias for timelineStart */
   sourceStart?: TimelineSeconds;

@@ -491,6 +491,15 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuratio
     sourceStart: 0,
     duration: 12.0,
     color: '#8854D0',
+    titleData: {
+      text: 'My Summer Story',
+      stylePreset: 'Cinematic Trailer',
+      position: { x: 50, y: 80 },
+      fontSize: 22,
+      scale: 1.0,
+      color: '#FFD700',
+      alignment: 'center',
+    },
   },
   {
     id: 'clip_title_2',
@@ -503,6 +512,15 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuratio
     sourceStart: 20.0,
     duration: 14.0,
     color: '#8854D0',
+    titleData: {
+      text: 'The Beautiful Sunrise',
+      stylePreset: 'Lower Third News',
+      position: { x: 30, y: 85 },
+      fontSize: 18,
+      scale: 1.0,
+      color: '#FFFFFF',
+      alignment: 'left',
+    },
   },
   // Track 2: Composite Video Segments with Real Playable CC0 URLs
   {
@@ -521,7 +539,7 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuratio
     videoUrl: '/sample_festival.mp4',
     isSelected: true,
     hasWaveform: true,
-    transitionOut: '][',
+    transitionOut: 'Cross Dissolve',
   },
   {
     id: 'clip_video_2',
@@ -538,8 +556,9 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuratio
     locator: '/sample_team.mp4',
     videoUrl: '/sample_team.mp4',
     hasWaveform: true,
-    transitionIn: '][',
-    transitionOut: '][',
+    transitionIn: 'Cross Dissolve',
+    transitionDuration: 1.2,
+    transitionOut: 'Glitch Flash',
   },
   {
     id: 'clip_video_3',
@@ -556,8 +575,10 @@ const RAW_TIMELINE_CLIPS: (Omit<TimelineClip, 'timelineStart' | 'timelineDuratio
     locator: '/sample_festival.mp4',
     videoUrl: '/sample_festival.mp4',
     hasWaveform: true,
-    transitionIn: '][',
-    transitionOut: '][',
+    transitionIn: 'Glitch Flash',
+    transitionDuration: 1.0,
+    filter: 'Retro Film',
+    filterData: { filterName: 'Retro Film', intensity: 100 },
   },
   {
     id: 'clip_video_4',
