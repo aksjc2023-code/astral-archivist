@@ -1,4 +1,4 @@
-import { WordToken } from './types';
+import { WordToken, asSourceSeconds } from './types';
 
 export const LEXICAL_FILLER_REGEX = /^(um+|uh+|er+|ah+|like|you know|basically|actually|literally)$/i;
 export const MIN_PAUSE_DURATION_SEC = 0.50; // Threshold for synthetic silence pause tokens
@@ -32,16 +32,17 @@ export function injectSyntheticPauseTokens(tokens: WordToken[]): WordToken[] {
     // Check gap before this token
     if (i > 0) {
       const prev = tokens[i - 1];
-      if (prev) {
+      if (prev && (!current.mediaId || !prev.mediaId || current.mediaId === prev.mediaId)) {
         const gap = current.start - prev.end;
         if (gap >= MIN_PAUSE_DURATION_SEC) {
           result.push({
-            id: `pause_${pauseCounter++}`,
+            id: `pause_${current.mediaId ? `${current.mediaId}_` : ''}${pauseCounter++}`,
             text: `[${gap.toFixed(2)}s pause]`,
-            start: prev.end,
-            end: current.start,
+            start: asSourceSeconds(prev.end),
+            end: asSourceSeconds(current.start),
             deleted: false,
             isPause: true,
+            mediaId: current.mediaId || prev.mediaId,
           });
         }
       }
@@ -51,6 +52,13 @@ export function injectSyntheticPauseTokens(tokens: WordToken[]): WordToken[] {
   }
 
   return result;
+}
+
+/**
+ * Pipeline processor: tags lexical fillers and injects pause tokens.
+ */
+export function processTranscribedTokens(tokens: WordToken[]): WordToken[] {
+  return injectSyntheticPauseTokens(tagLexicalFillers(tokens));
 }
 
 /**
