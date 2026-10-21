@@ -3,9 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test test/timelineEngine.test.ts"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

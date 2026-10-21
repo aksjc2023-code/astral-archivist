@@ -1,17 +1,24 @@
 /**
  * Core Domain Contracts & Math Interfaces for ScarletCut
  * Strictly typed with noUncheckedIndexedAccess compatibility
+ * Environment-neutral: zero DOM / React dependencies
  */
+
+/** Branded / Semantic time units in seconds */
+export type Seconds = number;
+export type TimelineSeconds = number;
+export type SourceSeconds = number;
+export type VirtualSeconds = number;
 
 export interface WordToken {
   id: string;
   text: string;
-  start: number;       // Source timestamp in seconds
-  end: number;         // Source timestamp in seconds
-  deleted: boolean;     // Soft-deletion flag for ripple cuts
-  isFiller?: boolean;   // Lexical filler: "um", "uh", "like", "you know"
-  isPause?: boolean;    // Synthetic silence pause >0.5s
-  isEdited?: boolean;   // Softablitz A2: AI audio overdub flag
+  start: SourceSeconds;       // Source timestamp in seconds
+  end: SourceSeconds;         // Source timestamp in seconds
+  deleted: boolean;           // Soft-deletion flag for ripple cuts
+  isFiller?: boolean;         // Lexical filler: "um", "uh", "like", "you know"
+  isPause?: boolean;          // Synthetic silence pause >0.5s
+  isEdited?: boolean;         // Softablitz A2: AI audio overdub flag
   replacementText?: string;
   replacementAudioUrl?: string;
   brollKeyword?: string;
@@ -19,20 +26,21 @@ export interface WordToken {
 
 export interface PlaybackSegment {
   id: string;
-  sourceStart: number;  // Interval [a_k, b_k] in raw source media
-  sourceEnd: number;
-  virtualStart: number; // Interval [v_k^start, v_k^end] in rippled virtual timeline
-  virtualEnd: number;
-  duration: number;     // b_k - a_k
+  sourceStart: SourceSeconds;  // Interval [a_k, b_k] in raw source media
+  sourceEnd: SourceSeconds;
+  virtualStart: VirtualSeconds; // Interval [v_k^start, v_k^end] in rippled virtual timeline
+  virtualEnd: VirtualSeconds;
+  duration: Seconds;          // b_k - a_k
 }
 
 export interface MediaAsset {
   id: string;
   name: string;
   type: 'video' | 'audio' | 'image';
-  duration: number;     // in seconds
+  duration: Seconds;          // in seconds
   thumbnailUrl: string;
-  videoUrl?: string;    // Direct MP4 video stream URL for real player demo
+  locator?: string;           // Environment-neutral media locator (file:// path, asset:// URI, or URL)
+  videoUrl?: string;          // Direct stream URL for browser preview
   isUsedOnTimeline: boolean;
   resolution?: string;
   category?: string;
@@ -43,15 +51,67 @@ export interface TimelineClip {
   id: string;
   trackId: string;
   title: string;
-  sourceStart: number;
-  duration: number;
+  timelineStart: TimelineSeconds;   // Placement on the composition timeline (in seconds)
+  timelineDuration: Seconds;        // Duration on the composition timeline (in seconds)
+  sourceIn: SourceSeconds;          // In-point inside the source media (in seconds)
+  sourceOut: SourceSeconds;         // Out-point inside the source media (in seconds; sourceOut - sourceIn = timelineDuration)
   color: string;
   mediaId?: string;
-  videoUrl?: string;    // Direct MP4 video stream URL for playback
+  locator?: string;                 // Media locator abstraction for Phase 2
+  videoUrl?: string;                // Direct stream URL for browser preview
   isSelected?: boolean;
   hasWaveform?: boolean;
   transitionIn?: string;
   transitionOut?: string;
+
+  /** @deprecated Compatibility alias for timelineStart */
+  sourceStart?: TimelineSeconds;
+  /** @deprecated Compatibility alias for timelineDuration */
+  duration?: Seconds;
+}
+
+/**
+ * Domain boundary validation functions
+ */
+export function validateWordToken(token: WordToken): void {
+  if (!Number.isFinite(token.start) || token.start < 0) {
+    throw new Error(`Invalid token start: ${token.start}`);
+  }
+  if (!Number.isFinite(token.end) || token.end < token.start) {
+    throw new Error(`Invalid token end: ${token.end} (must be >= start: ${token.start})`);
+  }
+}
+
+export function validateTimelineClip(clip: TimelineClip): void {
+  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
+  const dur = clip.timelineDuration ?? clip.duration ?? 0;
+  if (!Number.isFinite(start) || start < 0) {
+    throw new Error(`Invalid clip timelineStart: ${start}`);
+  }
+  if (!Number.isFinite(dur) || dur <= 0) {
+    throw new Error(`Invalid clip timelineDuration: ${dur}`);
+  }
+  if (clip.sourceIn !== undefined && (!Number.isFinite(clip.sourceIn) || clip.sourceIn < 0)) {
+    throw new Error(`Invalid clip sourceIn: ${clip.sourceIn}`);
+  }
+  if (clip.sourceOut !== undefined && (!Number.isFinite(clip.sourceOut) || clip.sourceOut < (clip.sourceIn ?? 0))) {
+    throw new Error(`Invalid clip sourceOut: ${clip.sourceOut}`);
+  }
+}
+
+export function validatePlaybackSegment(segment: PlaybackSegment): void {
+  if (!Number.isFinite(segment.sourceStart) || segment.sourceStart < 0) {
+    throw new Error(`Invalid segment sourceStart: ${segment.sourceStart}`);
+  }
+  if (!Number.isFinite(segment.sourceEnd) || segment.sourceEnd < segment.sourceStart) {
+    throw new Error(`Invalid segment sourceEnd: ${segment.sourceEnd}`);
+  }
+  if (!Number.isFinite(segment.virtualStart) || segment.virtualStart < 0) {
+    throw new Error(`Invalid segment virtualStart: ${segment.virtualStart}`);
+  }
+  if (!Number.isFinite(segment.virtualEnd) || segment.virtualEnd < segment.virtualStart) {
+    throw new Error(`Invalid segment virtualEnd: ${segment.virtualEnd}`);
+  }
 }
 
 export interface MarkerFlag {

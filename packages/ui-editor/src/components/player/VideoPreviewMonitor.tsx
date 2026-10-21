@@ -28,7 +28,9 @@ export interface VideoPreviewMonitorProps {
   onFirstFrame?: () => void;
   onLastFrame?: () => void;
   videoPreviewUrl?: string;
+  sourceTimeOffset?: number;
   isSeekLocked?: boolean;
+  onSeekLockChange?: (isLocked: boolean) => void;
   playbackSpeed?: number;
   onPlaybackSpeedChange?: (speed: number) => void;
   rotationAngle?: number;
@@ -51,7 +53,9 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onFirstFrame,
   onLastFrame,
   videoPreviewUrl = 'https://www.w3schools.com/html/mov_bbb.mp4',
+  sourceTimeOffset,
   isSeekLocked = false,
+  onSeekLockChange,
   playbackSpeed = 1.0,
   onPlaybackSpeedChange,
   rotationAngle = 0,
@@ -65,6 +69,74 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
   const scrubberTrackRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Robust ref-backed seek coordinator
+  const isSeekingRef = useRef(false);
+  const pendingSeekTargetRef = useRef<number | null>(null);
+  const seekSeqRef = useRef(0);
+  const seekTimeoutRef = useRef<number | null>(null);
+
+  const requestVideoSeek = (targetSec: number) => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    if (isSeekingRef.current) {
+      pendingSeekTargetRef.current = targetSec;
+      return;
+    }
+
+    const currentSeq = ++seekSeqRef.current;
+    isSeekingRef.current = true;
+    onSeekLockChange?.(true);
+
+    try {
+      v.currentTime = targetSec;
+    } catch {
+      isSeekingRef.current = false;
+      onSeekLockChange?.(false);
+    }
+
+    if (seekTimeoutRef.current) window.clearTimeout(seekTimeoutRef.current);
+    seekTimeoutRef.current = window.setTimeout(() => {
+      if (seekSeqRef.current === currentSeq && isSeekingRef.current) {
+        isSeekingRef.current = false;
+        onSeekLockChange?.(false);
+      }
+    }, 250);
+  };
+
+  const handleSeeking = () => {
+    isSeekingRef.current = true;
+    onSeekLockChange?.(true);
+  };
+
+  const handleSeeked = () => {
+    if (pendingSeekTargetRef.current !== null) {
+      const nextTarget = pendingSeekTargetRef.current;
+      pendingSeekTargetRef.current = null;
+      const v = videoRef.current;
+      if (v) {
+        try {
+          v.currentTime = nextTarget;
+        } catch {
+          isSeekingRef.current = false;
+          onSeekLockChange?.(false);
+        }
+      }
+    } else {
+      isSeekingRef.current = false;
+      onSeekLockChange?.(false);
+    }
+  };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (seekTimeoutRef.current) {
+        window.clearTimeout(seekTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Active word token for live karaoke subtitle overlay
   const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
@@ -100,16 +172,19 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     v.muted = isMuted;
   }, [volume, isMuted]);
 
-  // Sync currentTime to video offset
+  // Sync mapped source time to HTML5 video element with seek serialization
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     const vidDuration = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : 10;
-    const targetOffset = currentTime % vidDuration;
-    if (Math.abs(v.currentTime - targetOffset) > 0.35) {
-      v.currentTime = targetOffset;
+    const targetOffset = sourceTimeOffset !== undefined
+      ? (sourceTimeOffset % vidDuration)
+      : (currentTime % vidDuration);
+
+    if (Math.abs(v.currentTime - targetOffset) > 0.30) {
+      requestVideoSeek(targetOffset);
     }
-  }, [currentTime]);
+  }, [currentTime, sourceTimeOffset]);
 
   // Compute live CSS filters from Color Grading & LUT settings
   const computedCssFilter = useMemo(() => {
@@ -195,6 +270,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             playsInline
             loop
             muted={isMuted}
+            onSeeking={handleSeeking}
+            onSeeked={handleSeeked}
             style={{
               width: '100%',
               height: '100%',
@@ -410,6 +487,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title="First Frame (|◀)"
+            aria-label="First Frame"
             onClick={onFirstFrame ?? (() => onSeek(0))}
             style={transportBtnStyle}
           >
@@ -418,6 +496,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title="Previous Frame (◀|)"
+            aria-label="Previous Frame"
             onClick={onPrevFrame ?? (() => onSeek(Math.max(0, currentTime - 0.04)))}
             style={transportBtnStyle}
           >
@@ -426,6 +505,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title={isPlaying ? 'Pause (Space)' : 'Play (Space)'}
+            aria-label={isPlaying ? 'Pause' : 'Play'}
             onClick={onTogglePlay}
             style={{
               ...transportBtnStyle,
@@ -441,6 +521,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title="Next Frame (|▶)"
+            aria-label="Next Frame"
             onClick={onNextFrame ?? (() => onSeek(Math.min(duration, currentTime + 0.04)))}
             style={transportBtnStyle}
           >
@@ -449,6 +530,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title="Last Frame (▶|)"
+            aria-label="Last Frame"
             onClick={onLastFrame ?? (() => onSeek(duration))}
             style={transportBtnStyle}
           >
@@ -462,6 +544,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           <button
             type="button"
             title="Switch Aspect Ratio (16:9 / 9:16)"
+            aria-label="Switch Aspect Ratio"
             onClick={() => onAspectRatioChange(aspectRatio === '16:9' ? '9:16' : '16:9')}
             style={{
               backgroundColor: '#22262E',
@@ -485,6 +568,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <button
               type="button"
               title="Playback Speed (0.25x - 3.0x)"
+              aria-label="Select Playback Speed"
               onClick={() => setShowSpeedMenu(!showSpeedMenu)}
               style={{
                 backgroundColor: '#22262E',

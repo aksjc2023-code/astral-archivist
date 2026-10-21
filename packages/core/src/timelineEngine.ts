@@ -1,4 +1,12 @@
-import { WordToken, PlaybackSegment } from './types';
+import {
+  WordToken,
+  PlaybackSegment,
+  TimelineClip,
+  TimelineSeconds,
+  SourceSeconds,
+  VirtualSeconds,
+  Seconds,
+} from './types';
 
 /**
  * Constants strictly adhering to Argon ADR-001 Math Specification
@@ -7,32 +15,83 @@ export const EPSILON_MERGE_SEC = 0.085;       // 85ms micro-gap coalescing thres
 export const MIN_SEGMENT_DURATION_SEC = 0.030; // 30ms hardware decoder fault guard
 export const TIME_EPSILON_SEC = 0.005;         // 5ms floating-point boundary grace window
 
+/**
+ * Environment-Neutral Clock Provider interface for Phase 2 desktop / WASM portability
+ */
+export interface Clock {
+  now(): number;
+}
+
+export const defaultClock: Clock = {
+  now: (): number => {
+    // Environment-neutral: checks globalThis.performance safely without requiring DOM lib
+    const g = typeof globalThis !== 'undefined' ? (globalThis as Record<string, unknown>) : undefined;
+    const perf = g?.['performance'] as { now?: () => number } | undefined;
+    if (typeof perf?.now === 'function') {
+      return perf.now();
+    }
+    return Date.now();
+  },
+};
+
 export interface RebuildResult {
   segments: PlaybackSegment[];
   rebuildLatencyMs: number;
-  totalVirtualDuration: number;
-  totalSourceDuration: number;
-  timeSavedSec: number;
+  totalVirtualDuration: VirtualSeconds;
+  totalSourceDuration: SourceSeconds;
+  timeSavedSec: Seconds;
 }
 
 /**
  * Pure Coalescing Algorithm: Maps non-deleted WordTokens into contiguous PlaybackSegments.
  * Executes in under 0.4ms for sub-millisecond ripple edits.
+ * 
+ * Defensively normalizes input:
+ * 1. Rejects invalid / non-finite timestamps and zero-or-negative duration tokens
+ * 2. Normalizes order by sorting by (start ASC, end ASC, id ASC)
+ * 3. Coalesces intervals with gaps <= 85ms
+ * 4. Discards segments shorter than 30ms decoder guard
+ * 5. Generates monotonic bijective piecewise-linear mapping
  */
-export function buildPlaybackSegments(tokens: WordToken[]): RebuildResult {
-  const startTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+export function buildPlaybackSegments(
+  tokens: readonly WordToken[],
+  clock: Clock = defaultClock
+): RebuildResult {
+  const startTime = clock.now();
 
-  const keptTokens = tokens.filter(t => !t.deleted);
+  // 1. Defensively validate and normalize inputs
+  const validTokens: WordToken[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (!t) continue;
+    if (Number.isFinite(t.start) && Number.isFinite(t.end) && t.end > t.start) {
+      validTokens.push(t);
+    }
+  }
+
+  // 2. Sort defensively by (start ASC, end ASC, id ASC) to eliminate ordering assumptions
+  validTokens.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start;
+    if (a.end !== b.end) return a.end - b.end;
+    return a.id.localeCompare(b.id);
+  });
+
+  // 3. Filter kept tokens (non-deleted)
+  const keptTokens = validTokens.filter(t => !t.deleted);
   const segments: PlaybackSegment[] = [];
 
+  const rawTotalSource = validTokens.length > 0 
+    ? (validTokens[validTokens.length - 1]?.end ?? 0) 
+    : 0;
+
   if (keptTokens.length === 0) {
-    const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
+    const elapsed = clock.now() - startTime;
     return {
       segments: [],
       rebuildLatencyMs: Number(elapsed.toFixed(3)),
       totalVirtualDuration: 0,
-      totalSourceDuration: 0,
-      timeSavedSec: 0,
+      totalSourceDuration: rawTotalSource,
+      timeSavedSec: rawTotalSource,
     };
   }
 
@@ -46,13 +105,13 @@ export function buildPlaybackSegments(tokens: WordToken[]): RebuildResult {
 
     if (!prevToken || !currToken) continue;
 
-    const gap = currToken.start - prevToken.end;
+    const gap = currToken.start - currentEnd;
 
     // Check if tokens can coalesce: monotonic order and gap <= 85ms
-    if (gap <= EPSILON_MERGE_SEC && currToken.start >= prevToken.start) {
+    if (gap <= EPSILON_MERGE_SEC && currToken.start >= currentStart) {
       currentEnd = Math.max(currentEnd, currToken.end);
     } else {
-      // Close active segment if it satisfies minimum duration guard
+      // Close active segment if it satisfies minimum duration guard (30ms)
       const duration = currentEnd - currentStart;
       if (duration >= MIN_SEGMENT_DURATION_SEC) {
         segments.push({
@@ -69,7 +128,7 @@ export function buildPlaybackSegments(tokens: WordToken[]): RebuildResult {
     }
   }
 
-  // Push final segment
+  // Push final segment if it satisfies minimum duration guard
   const finalDuration = currentEnd - currentStart;
   if (finalDuration >= MIN_SEGMENT_DURATION_SEC) {
     segments.push({
@@ -92,9 +151,8 @@ export function buildPlaybackSegments(tokens: WordToken[]): RebuildResult {
     seg.virtualEnd = cumulativeVirtual;
   }
 
-  const rawTotalSource = tokens.length > 0 ? (tokens[tokens.length - 1]?.end ?? 0) : 0;
   const timeSaved = Math.max(0, rawTotalSource - cumulativeVirtual);
-  const elapsed = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - startTime;
+  const elapsed = clock.now() - startTime;
 
   return {
     segments,
@@ -107,29 +165,30 @@ export function buildPlaybackSegments(tokens: WordToken[]): RebuildResult {
 
 /**
  * O(log N) Binary Search Playhead Leap.
- * Evaluates whether currentTime is within a kept segment or needs a leap across a cut interval.
+ * Evaluates whether sourceTime is within a kept segment or needs a leap across a cut interval.
  */
 export function getNextValidTime(
-  currentTime: number,
-  segments: PlaybackSegment[]
-): { nextTime: number; didJump: boolean; activeSegmentIndex: number; searchLatencyMs: number } {
-  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  sourceTime: SourceSeconds,
+  segments: readonly PlaybackSegment[],
+  clock: Clock = defaultClock
+): { nextTime: SourceSeconds; didJump: boolean; activeSegmentIndex: number; searchLatencyMs: number } {
+  const t0 = clock.now();
 
   if (segments.length === 0) {
-    const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-    return { nextTime: currentTime, didJump: false, activeSegmentIndex: -1, searchLatencyMs: Number((t1 - t0).toFixed(4)) };
+    const t1 = clock.now();
+    return { nextTime: sourceTime, didJump: false, activeSegmentIndex: -1, searchLatencyMs: Number((t1 - t0).toFixed(4)) };
   }
 
   const firstSeg = segments[0];
   const lastSeg = segments[segments.length - 1];
 
   if (!firstSeg || !lastSeg) {
-    return { nextTime: currentTime, didJump: false, activeSegmentIndex: -1, searchLatencyMs: 0 };
+    return { nextTime: sourceTime, didJump: false, activeSegmentIndex: -1, searchLatencyMs: 0 };
   }
 
-  // If before first segment, jump to first segment start
-  if (currentTime < firstSeg.sourceStart - TIME_EPSILON_SEC) {
-    const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  // If before first segment, leap to first segment start
+  if (sourceTime < firstSeg.sourceStart - TIME_EPSILON_SEC) {
+    const t1 = clock.now();
     return {
       nextTime: firstSeg.sourceStart,
       didJump: true,
@@ -139,8 +198,8 @@ export function getNextValidTime(
   }
 
   // If past last segment, clamp to last segment end
-  if (currentTime > lastSeg.sourceEnd) {
-    const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (sourceTime > lastSeg.sourceEnd) {
+    const t1 = clock.now();
     return {
       nextTime: lastSeg.sourceEnd,
       didJump: false,
@@ -159,17 +218,17 @@ export function getNextValidTime(
     if (!seg) break;
 
     // Inside current segment with boundary epsilon
-    if (currentTime >= seg.sourceStart - TIME_EPSILON_SEC && currentTime <= seg.sourceEnd + TIME_EPSILON_SEC) {
-      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (sourceTime >= seg.sourceStart - TIME_EPSILON_SEC && sourceTime <= seg.sourceEnd + TIME_EPSILON_SEC) {
+      const t1 = clock.now();
       return {
-        nextTime: currentTime,
+        nextTime: sourceTime,
         didJump: false,
         activeSegmentIndex: mid,
         searchLatencyMs: Number((t1 - t0).toFixed(4)),
       };
     }
 
-    if (currentTime < seg.sourceStart) {
+    if (sourceTime < seg.sourceStart) {
       high = mid - 1;
     } else {
       low = mid + 1;
@@ -178,7 +237,7 @@ export function getNextValidTime(
 
   // Playhead fell into a cut interval between segments: leap to low (the next kept segment)
   const targetSeg = segments[low];
-  const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const t1 = clock.now();
 
   if (targetSeg) {
     return {
@@ -200,7 +259,9 @@ export function getNextValidTime(
 /**
  * Bijective Piecewise-Linear Mapping: Source Media Timestamp -> Virtual Timeline Timestamp
  */
-export function sourceToVirtualTime(sourceTime: number, segments: PlaybackSegment[]): number {
+export function sourceToVirtualTime(sourceTime: SourceSeconds, segments: readonly PlaybackSegment[]): VirtualSeconds {
+  if (segments.length === 0) return 0;
+  
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (!seg) continue;
@@ -218,7 +279,9 @@ export function sourceToVirtualTime(sourceTime: number, segments: PlaybackSegmen
 /**
  * Inverse Bijective Mapping: Virtual Timeline Timestamp -> Source Media Timestamp
  */
-export function virtualToSourceTime(virtualTime: number, segments: PlaybackSegment[]): number {
+export function virtualToSourceTime(virtualTime: VirtualSeconds, segments: readonly PlaybackSegment[]): SourceSeconds {
+  if (segments.length === 0) return 0;
+
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
     if (!seg) continue;
@@ -228,6 +291,56 @@ export function virtualToSourceTime(virtualTime: number, segments: PlaybackSegme
   }
   const last = segments[segments.length - 1];
   return last ? last.sourceEnd : 0;
+}
+
+/**
+ * Maps a composition timeline timestamp to the active source offset within a clip
+ */
+export function timelineToSourceTime(timelineTime: TimelineSeconds, clip: TimelineClip): SourceSeconds {
+  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
+  const dur = clip.timelineDuration ?? clip.duration ?? 0;
+  const inPoint = clip.sourceIn ?? 0;
+  const offset = Math.max(0, Math.min(dur, timelineTime - start));
+  return inPoint + offset;
+}
+
+/**
+ * Maps an offset within a clip's source media back to composition timeline time
+ */
+export function sourceToTimelineTime(sourceTime: SourceSeconds, clip: TimelineClip): TimelineSeconds {
+  const start = clip.timelineStart ?? clip.sourceStart ?? 0;
+  const dur = clip.timelineDuration ?? clip.duration ?? 0;
+  const inPoint = clip.sourceIn ?? 0;
+  const offset = Math.max(0, Math.min(dur, sourceTime - inPoint));
+  return start + offset;
+}
+
+/**
+ * Helper to retrieve the active clip on a track at a given composition timeline timestamp
+ */
+export function getClipAtTimelineTime(
+  timelineTime: TimelineSeconds,
+  clips: readonly TimelineClip[],
+  trackId = 'track_video'
+): TimelineClip | undefined {
+  return clips.find(c => {
+    if (c.trackId !== trackId) return false;
+    const start = c.timelineStart ?? c.sourceStart ?? 0;
+    const dur = c.timelineDuration ?? c.duration ?? 0;
+    return timelineTime >= start && timelineTime < start + dur;
+  });
+}
+
+/**
+ * Computes total composition duration across all clips on the timeline
+ */
+export function getProjectDuration(clips: readonly TimelineClip[], minDuration = 30.0): Seconds {
+  const maxEnd = clips.reduce((max, c) => {
+    const start = c.timelineStart ?? c.sourceStart ?? 0;
+    const dur = c.timelineDuration ?? c.duration ?? 0;
+    return Math.max(max, start + dur);
+  }, 0);
+  return Math.max(minDuration, maxEnd);
 }
 
 /**

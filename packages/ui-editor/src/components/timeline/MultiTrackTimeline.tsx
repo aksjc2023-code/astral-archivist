@@ -17,8 +17,13 @@ export interface MultiTrackTimelineProps {
   selectedClipId?: string;
   onSeek: (time: number) => void;
   onSelectClip?: (clipId: string) => void;
+  onTrimClip?: (clipId: string, side: 'left' | 'right', deltaSec: number) => void;
+  onAddTrack?: () => void;
   onDeleteMarker?: (markerId: string) => void;
 }
+
+const getClipStart = (c: TimelineClip): number => c.timelineStart ?? c.sourceStart ?? 0;
+const getClipDuration = (c: TimelineClip): number => c.timelineDuration ?? c.duration ?? 0;
 
 export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   currentTime,
@@ -30,6 +35,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   selectedClipId,
   onSeek,
   onSelectClip,
+  onTrimClip,
+  onAddTrack,
   onDeleteMarker,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
@@ -50,6 +57,31 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     isDraggingRef.current = true;
     const clickedTime = calculateTimeFromClientX(e.clientX);
     onSeek(clickedTime);
+  };
+
+  const handleTrimMouseDown = (e: React.MouseEvent, clipId: string, side: 'left' | 'right') => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    let accumulatedSec = 0;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaPx = moveEvent.clientX - startX;
+      const currentDeltaSec = Number((deltaPx / pxPerSec).toFixed(2));
+      const stepDelta = currentDeltaSec - accumulatedSec;
+      if (Math.abs(stepDelta) >= 0.05) {
+        accumulatedSec = currentDeltaSec;
+        onTrimClip?.(clipId, side, stepDelta);
+      }
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   useEffect(() => {
@@ -106,6 +138,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       >
         {/* Top Header Corner: Plus Add Track */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Add New Track"
           style={{
             height: '28px',
             borderBottom: '1px solid #2B303A',
@@ -118,7 +153,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             fontWeight: 600,
           }}
           title="Add New Video/Audio Track"
-          onClick={() => alert('Add Video, Audio, or Subtitle Track')}
+          onClick={onAddTrack ?? (() => {})}
         >
           +
         </div>
@@ -315,6 +350,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {titleClips.map(clip => {
               const isSelected = clip.id === selectedClipId;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
               return (
                 <div
                   key={clip.id}
@@ -324,13 +361,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   }}
                   onDoubleClick={e => {
                     e.stopPropagation();
-                    onSeek(clip.sourceStart);
+                    onSeek(clipStart);
                   }}
                   title={`[Title] ${clip.title} (Double-click to seek)`}
                   style={{
                     position: 'absolute',
-                    left: `${clip.sourceStart * pxPerSec}px`,
-                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
                     height: '24px',
                     top: '6px',
                     backgroundColor: '#8854D0',
@@ -366,6 +403,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {videoClips.map((clip, index) => {
               const isSelected = clip.id === selectedClipId || clip.isSelected;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
               return (
                 <div
                   key={clip.id}
@@ -375,13 +414,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   }}
                   onDoubleClick={e => {
                     e.stopPropagation();
-                    onSeek(clip.sourceStart);
+                    onSeek(clipStart);
                   }}
-                  title={`[Video] ${clip.title} (${clip.duration.toFixed(1)}s) - Click to select, Double-click to seek`}
+                  title={`[Video] ${clip.title} (${clipDur.toFixed(1)}s) - Click to select, Double-click to seek`}
                   style={{
                     position: 'absolute',
-                    left: `${clip.sourceStart * pxPerSec}px`,
-                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
                     height: '66px',
                     top: '5px',
                     backgroundColor: '#2A3548',
@@ -396,31 +435,43 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border-color 0.12s ease, box-shadow 0.12s ease',
                   }}
                 >
-                  {/* Yellow Drag Handles if Selected (Page 1) */}
+                  {/* Yellow Drag Handles if Selected (Page 1 Interactive Trim) */}
                   {isSelected && (
                     <>
                       <div
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag to trim clip in-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left')}
                         style={{
                           position: 'absolute',
                           left: '0',
                           top: '0',
                           bottom: '0',
-                          width: '6px',
+                          width: '7px',
                           backgroundColor: '#FFD32A',
                           cursor: 'ew-resize',
                           zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
                         }}
                       />
                       <div
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag to trim clip out-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right')}
                         style={{
                           position: 'absolute',
                           right: '0',
                           top: '0',
                           bottom: '0',
-                          width: '6px',
+                          width: '7px',
                           backgroundColor: '#FFD32A',
                           cursor: 'ew-resize',
                           zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
                         }}
                       />
                     </>
@@ -455,7 +506,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     }}
                   >
                     {/* Simulated Audio Bars */}
-                    {Array.from({ length: Math.min(50, Math.floor(clip.duration * 2.2)) }).map((_, barIdx) => {
+                    {Array.from({ length: Math.min(50, Math.floor(clipDur * 2.2)) }).map((_, barIdx) => {
                       const h = 4 + ((barIdx * 7) % 18);
                       return (
                         <div
@@ -507,6 +558,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {audioClips.map(clip => {
               const isSelected = clip.id === selectedClipId;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
               return (
                 <div
                   key={clip.id}
@@ -516,13 +569,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   }}
                   onDoubleClick={e => {
                     e.stopPropagation();
-                    onSeek(clip.sourceStart);
+                    onSeek(clipStart);
                   }}
                   title={`[Audio] ${clip.title} (Double-click to seek)`}
                   style={{
                     position: 'absolute',
-                    left: `${clip.sourceStart * pxPerSec}px`,
-                    width: `${Math.max(20, clip.duration * pxPerSec)}px`,
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
                     height: '32px',
                     top: '6px',
                     backgroundColor: '#10AC84',
@@ -545,7 +598,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
                   {/* Mint-Green Acoustic Waveform */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '2px', height: '14px' }}>
-                    {Array.from({ length: Math.min(80, Math.floor(clip.duration * 2)) }).map((_, i) => (
+                    {Array.from({ length: Math.min(80, Math.floor(clipDur * 2)) }).map((_, i) => (
                       <div
                         key={i}
                         style={{

@@ -6,10 +6,12 @@
   "scripts": {
     "dev": "pnpm --filter webster dev",
     "build": "pnpm --filter \"@astral/*\" build && pnpm --filter webster build",
+    "test": "tsx --test packages/core/test/timelineEngine.test.ts",
     "typecheck": "pnpm --recursive typecheck",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "devDependencies": {
+    "tsx": "^4.23.15",
     "typescript": "^5.7.3"
   }
 }
