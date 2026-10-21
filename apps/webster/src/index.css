@@ -1,0 +1,72 @@
+:root {
+  /* Core Brand & State Accents (Page 9) */
+  --sc-brand-blue: #168BFF;
+  --sc-brand-blue-hover: #329AFF;
+  --sc-brand-blue-active: #0B6ED6;
+  --sc-accent-new: #8854D0;
+  --sc-state-success: #2ED573;
+  --sc-state-notification: #FFA502;
+  --sc-state-error: #FF4757;
+
+  /* Background Hierarchy */
+  --sc-bg-1-deepest: #111317;
+  --sc-bg-2-panel: #181B20;
+  --sc-bg-3-surface: #22262E;
+  --sc-bg-4-elevated: #2C313C;
+  --sc-border-subtle: #2B303A;
+  --sc-border-muted: #454D5B;
+
+  /* Text & Icon Hierarchy */
+  --sc-text-primary: #FFFFFF;
+  --sc-text-secondary: #A4B0BE;
+  --sc-text-muted: #636E7B;
+
+  /* Timeline Tracks */
+  --sc-track-video: #4B6584;
+  --sc-track-video-select: #FFD32A;
+  --sc-track-audio: #10AC84;
+  --sc-track-title: #8854D0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--sc-bg-1-deepest);
+  color: var(--sc-text-primary);
+  font-family: 'Lucida Grande', 'Verdana', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  height: 100vh;
+  width: 100vw;
+  user-select: none;
+}
+
+/* Custom Sleek Movavi Dark Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111317;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2B303A;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #454D5B;
+}
+
+/* Range input styling */
+input[type="range"] {
+  accent-color: var(--sc-brand-blue);
+  cursor: pointer;
+}
