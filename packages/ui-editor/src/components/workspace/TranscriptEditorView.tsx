@@ -18,6 +18,11 @@ export interface TranscriptEditorViewProps {
   onTranscribeCurrentMedia?: () => void;
   onFastGenerateTranscript?: (mediaId: string) => void;
   isTranscribing?: boolean;
+  whisperModel?: string;
+  onSelectWhisperModel?: (model: string) => void;
+  webGpuDeviceName?: string | null;
+  transcriptionError?: string | null;
+  onClearTranscriptionError?: () => void;
 }
 
 export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
@@ -35,6 +40,11 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   onTranscribeCurrentMedia,
   onFastGenerateTranscript,
   isTranscribing = false,
+  whisperModel = 'Xenova/whisper-tiny.en',
+  onSelectWhisperModel,
+  webGpuDeviceName,
+  transcriptionError,
+  onClearTranscriptionError,
 }) => {
   const [showMediaDropdown, setShowMediaDropdown] = useState(false);
   const activeAsset = mediaAssets?.find(a => a.id === activeMediaId);
@@ -201,6 +211,53 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               Zero-SSR Ripple Engine
             </span>
 
+            {/* Hardware Telemetry Badge */}
+            <span
+              id="badge-whisper-hardware"
+              style={{
+                fontSize: '10px',
+                fontWeight: 600,
+                backgroundColor: webGpuDeviceName ? '#054429' : '#3D2A00',
+                color: webGpuDeviceName ? '#34D399' : '#FBBF24',
+                border: `1px solid ${webGpuDeviceName ? '#10B981' : '#F59E0B'}`,
+                borderRadius: '9999px',
+                padding: '2px 8px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+              title={webGpuDeviceName ? `WebGPU Accelerated (${webGpuDeviceName})` : 'WebAssembly Multi-threaded SIMD CPU'}
+            >
+              <span style={{ fontSize: '8px' }}>{webGpuDeviceName ? '🟢' : '🟡'}</span>
+              <span>{webGpuDeviceName ? `WebGPU: ${webGpuDeviceName.slice(0, 18)}` : 'WASM SIMD'}</span>
+            </span>
+
+            {/* Whisper Model Selector Dropdown */}
+            {onSelectWhisperModel && (
+              <select
+                id="select-whisper-model"
+                data-testid="select-whisper-model"
+                value={whisperModel}
+                onChange={e => onSelectWhisperModel(e.target.value)}
+                style={{
+                  backgroundColor: '#22262E',
+                  border: '1px solid #3B4F6B',
+                  color: '#FFFFFF',
+                  padding: '3px 8px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  fontWeight: 500,
+                  outline: 'none',
+                  cursor: 'pointer',
+                }}
+                title="Select Whisper Model for Speech-to-Text"
+              >
+                <option value="Xenova/whisper-tiny.en">Whisper Tiny (English, ~39MB) ⚡</option>
+                <option value="Xenova/whisper-tiny">Whisper Tiny (Multilingual, ~39MB) 🌐</option>
+                <option value="Xenova/whisper-base.en">Whisper Base (English, ~73MB) 🎯</option>
+              </select>
+            )}
+
             {/* Media Asset Selector Dropdown */}
             {mediaAssets && mediaAssets.length > 0 && (
               <div style={{ position: 'relative' }}>
@@ -309,13 +366,13 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           {onTranscribeCurrentMedia && (
             <ScarletButton
               id="btn-run-webgpu-whisper"
-              variant="secondary"
+              variant="primary"
               size="sm"
-              icon={<IconSparkles size={13} color="#2ED573" />}
+              icon={<IconSparkles size={13} color="#FFFFFF" />}
               onClick={onTranscribeCurrentMedia}
               disabled={isTranscribing}
             >
-              {isTranscribing ? 'Transcribing (WebGPU)...' : 'Run WebGPU Whisper'}
+              {isTranscribing ? 'Transcribing...' : 'Run Whisper Speech-to-Text'}
             </ScarletButton>
           )}
 
@@ -353,6 +410,66 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           </ScarletButton>
         </div>
       </div>
+
+      {/* Transcription Error Banner */}
+      {transcriptionError && (
+        <div
+          id="transcription-error-banner"
+          style={{
+            backgroundColor: '#3B1219',
+            border: '1px solid #FF4757',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            marginBottom: '12px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#FF6B81', fontSize: '12px' }}>
+            <span style={{ fontSize: '15px' }}>⚠️</span>
+            <span>{transcriptionError}</span>
+          </div>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            {onTranscribeCurrentMedia && (
+              <button
+                type="button"
+                onClick={onTranscribeCurrentMedia}
+                style={{
+                  backgroundColor: '#FF4757',
+                  color: '#FFFFFF',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '4px 10px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Retry
+              </button>
+            )}
+            {onClearTranscriptionError && (
+              <button
+                type="button"
+                onClick={onClearTranscriptionError}
+                style={{
+                  backgroundColor: 'transparent',
+                  color: '#A4B0BE',
+                  border: '1px solid #57606F',
+                  borderRadius: '4px',
+                  padding: '4px 8px',
+                  fontSize: '11px',
+                  cursor: 'pointer',
+                }}
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Transcript Search Filter */}
       <div

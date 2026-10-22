@@ -56,7 +56,7 @@ import {
   IconSparkles,
 } from '@astral/ui-editor';
 
-import { transcribeMediaFile } from './services/whisperService';
+import { transcribeMediaFile, checkWebGpuAvailability } from './services/whisperService';
 import {
   exportVideoWithFfmpegWasm,
   exportCompositionWithFfmpegWasm,
@@ -81,6 +81,18 @@ export const App: React.FC = () => {
   const [transcribeStatus, setTranscribeStatus] = useState('');
   const [transcribePercent, setTranscribePercent] = useState(0);
   const [transcribeFileName, setTranscribeFileName] = useState('');
+  const [whisperModel, setWhisperModel] = useState('Xenova/whisper-tiny.en');
+  const [webGpuDeviceName, setWebGpuDeviceName] = useState<string | null>(null);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
+
+  // Detect WebGPU hardware availability on mount
+  useEffect(() => {
+    checkWebGpuAvailability().then(res => {
+      if (res.supported && res.adapterName) {
+        setWebGpuDeviceName(res.adapterName);
+      }
+    });
+  }, []);
 
   // Retain actual File/Blob handles for uploaded assets (to feed Whisper and FFmpeg WASM)
   const fileBlobMapRef = useRef<Map<string, Blob>>(new Map());
@@ -1171,16 +1183,29 @@ export const App: React.FC = () => {
   // Transcribe any media File/Blob with WebGPU Whisper
   const handleTranscribeMedia = useCallback(async (blob: Blob, asset: MediaAsset) => {
     setIsTranscribing(true);
+    setTranscriptionError(null);
     setTranscribeFileName(asset.name);
     setTranscribePercent(5);
-    setTranscribeStatus('Extracting audio & initializing Whisper...');
+    setTranscribeStatus(`Extracting audio & initializing Whisper (${whisperModel.replace('Xenova/', '')})...`);
 
     try {
-      const result = await transcribeMediaFile(blob, asset.id, (status, percent) => {
-        setTranscribeStatus(status);
-        if (percent !== undefined) {
-          setTranscribePercent(percent);
-        }
+      const result = await transcribeMediaFile(blob, asset.id, {
+        modelId: whisperModel,
+        onProgress: (status, percent) => {
+          setTranscribeStatus(status);
+          if (percent !== undefined) {
+            setTranscribePercent(percent);
+          }
+        },
+        onChunkTokens: partialTokens => {
+          if (partialTokens && partialTokens.length > 0) {
+            setTokensByMedia(prev => ({
+              ...prev,
+              [asset.id]: partialTokens,
+            }));
+            setActiveTranscriptMediaId(asset.id);
+          }
+        },
       });
 
       if (result.tokens.length > 0) {
@@ -1211,21 +1236,22 @@ export const App: React.FC = () => {
 
       setTelemetry(prev => ({
         ...prev,
-        recoveryLog: `Transcribed "${asset.name}" via WebGPU (${result.deviceUsed}). Generated ${result.tokens.length} words.`,
+        recoveryLog: `Transcribed "${asset.name}" via ${result.deviceUsed.toUpperCase()}. Generated ${result.tokens.length} words.`,
       }));
 
       // Switch to transcript tab so user sees the live words!
       setActiveDockTab('media');
       setActiveSubNav('transcript');
-    } catch (err) {
+    } catch (err: any) {
       console.error('[Whisper] Transcription error:', err);
-      alert(`Transcription: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      setTranscriptionError(msg);
     } finally {
       setIsTranscribing(false);
       setTranscribePercent(0);
       setTranscribeStatus('');
     }
-  }, [clips, pushHistory, tokensByMedia]);
+  }, [clips, pushHistory, tokensByMedia, whisperModel]);
 
   // Download all: client-side JSON project manifest (assets, tokens, clips, markers)
   const handleDownloadAll = useCallback(() => {
@@ -2129,6 +2155,11 @@ export const App: React.FC = () => {
               onTranscribeCurrentMedia={handleTranscribeCurrentMedia}
               onFastGenerateTranscript={handleFastGenerateTranscript}
               isTranscribing={isTranscribing}
+              whisperModel={whisperModel}
+              onSelectWhisperModel={setWhisperModel}
+              webGpuDeviceName={webGpuDeviceName}
+              transcriptionError={transcriptionError}
+              onClearTranscriptionError={() => setTranscriptionError(null)}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */
