@@ -61,9 +61,15 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
     : [];
 
   const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
-  const deletedCount = tokens.filter(t => t.deleted).length;
+  const deletedTokens = tokens.filter(t => t.deleted);
+  const deletedCount = deletedTokens.length;
+  const deletedDurationSec = deletedTokens.reduce((sum, t) => sum + Math.max(0, t.end - t.start), 0);
   const fillerCount = tokens.filter(t => t.isFiller || t.isPause).length;
   const discourseCount = tokens.filter(t => t.isDiscourseMarker && !t.isFiller).length;
+
+  // Mouse Drag-to-Select State (Page 2 & Whisper text-editor precision)
+  const [isMouseSelecting, setIsMouseSelecting] = useState(false);
+  const dragStartIndexRef = useRef<number | null>(null);
 
   // Handle Token Click (Selection & Playhead Seek)
   const handleTokenClick = (token: WordToken, e: React.MouseEvent) => {
@@ -108,6 +114,48 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
       }
     }
   };
+
+  // Mouse Drag-to-Select handlers across transcript tokens
+  const handleTokenMouseDown = (token: WordToken, e: React.MouseEvent) => {
+    if (e.button !== 0 || editingTokenId) return;
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      // Let handleTokenClick handle multi-select modifier clicks
+      return;
+    }
+    const idx = tokens.findIndex(t => t.id === token.id);
+    if (idx !== -1) {
+      setIsMouseSelecting(true);
+      dragStartIndexRef.current = idx;
+      setSelectedTokenIds(new Set([token.id]));
+      lastSelectedIdRef.current = token.id;
+    }
+  };
+
+  const handleTokenMouseEnter = (token: WordToken) => {
+    if (!isMouseSelecting || dragStartIndexRef.current === null) return;
+    const currentIdx = tokens.findIndex(t => t.id === token.id);
+    if (currentIdx !== -1) {
+      const start = Math.min(dragStartIndexRef.current, currentIdx);
+      const end = Math.max(dragStartIndexRef.current, currentIdx);
+      const newSet = new Set<string>();
+      for (let i = start; i <= end; i++) {
+        const t = tokens[i];
+        if (t) newSet.add(t.id);
+      }
+      setSelectedTokenIds(newSet);
+    }
+  };
+
+  useEffect(() => {
+    const handleGlobalMouseUp = () => {
+      if (isMouseSelecting) {
+        setIsMouseSelecting(false);
+        dragStartIndexRef.current = null;
+      }
+    };
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+  }, [isMouseSelecting]);
 
   // Keyboard shortcut: Backspace or Delete to ripple-cut selected tokens (BUG-22 Fix: ignore when focused in input/textarea)
   const handleKeyDown = useCallback(
@@ -231,6 +279,29 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               <span style={{ fontSize: '8px' }}>{webGpuDeviceName ? '🟢' : '🟡'}</span>
               <span>{webGpuDeviceName ? `WebGPU: ${webGpuDeviceName.slice(0, 18)}` : 'WASM SIMD'}</span>
             </span>
+
+            {/* Ripple Time Saved Telemetry Badge */}
+            {deletedDurationSec > 0 && (
+              <span
+                id="badge-time-saved"
+                data-testid="badge-time-saved"
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  backgroundColor: '#3B1219',
+                  color: '#FF6B81',
+                  border: '1px solid #FF4757',
+                  borderRadius: '9999px',
+                  padding: '2px 8px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+                title="Total video time cut via transcript ripple edits"
+              >
+                <span>✂️ Saved: {deletedDurationSec.toFixed(1)}s ({deletedCount} words)</span>
+              </span>
+            )}
 
             {/* Whisper Model Selector Dropdown */}
             {onSelectWhisperModel && (
@@ -758,10 +829,12 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               data-testid={`word-token-${token.id}`}
               data-token-text={token.text}
               onClick={e => handleTokenClick(token, e)}
+              onMouseDown={e => handleTokenMouseDown(token, e)}
+              onMouseEnter={() => handleTokenMouseEnter(token)}
               onDoubleClick={e => handleStartEdit(token, e)}
               title={`[${token.start.toFixed(2)}s - ${token.end.toFixed(2)}s] ${
                 token.isFiller ? '(Hard Filler) ' : token.isDiscourseMarker ? '(Discourse Marker) ' : ''
-              }Click to select/seek, Backspace to cut, Double-click to AI overdub`}
+              }Click to select/seek, Drag to range-select, Backspace to cut, Double-click to AI overdub`}
               style={{
                 position: 'relative',
                 display: 'inline-block',

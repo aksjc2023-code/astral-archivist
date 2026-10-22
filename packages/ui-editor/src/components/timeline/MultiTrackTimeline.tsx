@@ -1498,6 +1498,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSeekToSourceTime?.(block.startSec);
                   }}
+                  onContextMenu={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Toggle cut status of all tokens in this caption block directly from the timeline
+                    if (onToggleDeleteToken) {
+                      block.tokens.forEach(tok => onToggleDeleteToken(tok.id));
+                    }
+                  }}
                   onDoubleClick={e => {
                     e.stopPropagation();
                     const newText = prompt('Edit Caption Subtitle:', block.text);
@@ -1505,7 +1513,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                       onEditTokenText?.(block.tokens[0].id, newText.trim());
                     }
                   }}
-                  title={`[Subtitle Block] "${block.text}" (${block.startSec.toFixed(1)}s - ${block.endSec.toFixed(1)}s)\nClick to seek • Double-click to edit text`}
+                  title={`[Subtitle Block] "${block.text}" (${block.startSec.toFixed(1)}s - ${block.endSec.toFixed(1)}s)\nClick to seek • Right-click to cut/restore • Double-click to edit text`}
                   style={{
                     position: 'absolute',
                     left: `${blockLeft}px`,
