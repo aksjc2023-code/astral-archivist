@@ -1815,7 +1815,7 @@ export const App: React.FC = () => {
       } else {
         const newFilterClip: TimelineClip = {
           id: `filter_${Date.now()}`,
-          trackId: 'track_custom_stickers',
+          trackId: 'track_effects',
           title: `⚡ ${effectName}`,
           timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
           timelineDuration: asSeconds(4.0),
@@ -1879,7 +1879,7 @@ export const App: React.FC = () => {
       setActiveSticker(effectName);
       const newStickerClip: TimelineClip = {
         id: `sticker_${Date.now()}`,
-        trackId: 'track_custom_stickers',
+        trackId: 'track_stickers',
         title: `★ ${effectName}`,
         timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
         timelineDuration: asSeconds(4.0),

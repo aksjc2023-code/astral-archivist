@@ -201,30 +201,44 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
     e.stopPropagation();
 
-    // Multi-select toggle with Shift+Click
-    if (e.shiftKey) {
-      const currentSelected = selectedClipIds ?? (selectedClipId ? [selectedClipId] : []);
-      const next = currentSelected.includes(clipId)
+    // Multi-select toggle with Shift+Click or Ctrl/Cmd+Click
+    const isMultiSelectModifier = e.shiftKey || e.ctrlKey || e.metaKey;
+    const currentSelected = selectedClipIds ?? (selectedClipId ? [selectedClipId] : []);
+    const isAlreadySelected = currentSelected.includes(clipId);
+
+    if (isMultiSelectModifier) {
+      const next = isAlreadySelected
         ? currentSelected.filter(id => id !== clipId)
         : [...currentSelected, clipId];
       onSelectClips?.(next);
-      if (next.length > 0) onSelectClip?.(next[0]!);
+      if (next.length > 0) {
+        onSelectClip?.(next[next.length - 1]!);
+      } else {
+        onSelectClip?.('');
+      }
       return;
     }
 
-    const isAlreadySelected = selectedClipIds ? selectedClipIds.includes(clipId) : clipId === selectedClipId;
+    // Single click on a clip:
+    // If it's NOT already selected, select it immediately
+    // If it IS already selected as part of a multi-selection, don't clear the others yet!
+    // That way the user can drag the entire group. If they just click without dragging, we isolate it on mouseup.
+    let activeSelectedIds: string[];
+    let shouldIsolateOnMouseUp = false;
+
     if (!isAlreadySelected) {
+      activeSelectedIds = [clipId];
       onSelectClips?.([clipId]);
       onSelectClip?.(clipId);
+    } else {
+      activeSelectedIds = currentSelected.length > 0 ? currentSelected : [clipId];
+      if (activeSelectedIds.length > 1) {
+        shouldIsolateOnMouseUp = true;
+      }
     }
 
     const startX = e.clientX;
     let hasDragged = false;
-
-    // Snapshot initial positions of all currently selected clips for batch dragging
-    const activeSelectedIds = (selectedClipIds && selectedClipIds.includes(clipId))
-      ? selectedClipIds
-      : [clipId];
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaPx = moveEvent.clientX - startX;
@@ -247,6 +261,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       window.removeEventListener('mouseup', handleMouseUp);
       if (hasDragged) {
         onClipMoveEnd?.(clipId);
+      } else if (shouldIsolateOnMouseUp) {
+        // User clicked on an already-selected clip without dragging: isolate selection to this clip
+        onSelectClips?.([clipId]);
+        onSelectClip?.(clipId);
       }
     };
 
@@ -451,8 +469,18 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const playheadPositionPx = currentTime * pxPerSec;
 
   const effectClips = clips.filter(c => c.trackId === 'track_effects' || (c as any).isFilter);
-  const stickerClips = clips.filter(c => c.trackId === 'track_stickers' || c.trackId === 'track_custom_stickers' || c.title.startsWith('★ ') || (c as any).isTransition || c.title.startsWith('⧉ '));
-  const titleClips = clips.filter(c => c.trackId === 'track_title');
+  const stickerClips = clips.filter(c => {
+    // Strictly exclude any filter clips from stickers/overlay track
+    if (c.trackId === 'track_effects' || (c as any).isFilter) return false;
+    return (
+      c.trackId === 'track_stickers' ||
+      c.trackId === 'track_custom_stickers' ||
+      c.title.startsWith('★ ') ||
+      (c as any).isTransition ||
+      c.title.startsWith('⧉ ')
+    );
+  });
+  const titleClips = clips.filter(c => c.trackId === 'track_title' && !(c as any).isFilter);
   const videoClips = clips.filter(c => c.trackId === 'track_video');
   const audioClips = clips.filter(c => c.trackId === 'track_audio');
 
