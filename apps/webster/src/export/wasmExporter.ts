@@ -32,8 +32,29 @@ export interface WasmExportOptions {
   includeSubtitles?: boolean;
   resolution?: '1080p' | '720p' | '4k' | 'original';
   aspectRatio?: AspectRatio;
+  format?: 'MP4' | 'MOV' | 'WebM' | 'GIF' | 'MP3';
+  outputFilename?: string;
+  audioInputs?: AudioTrackInput[];
   onProgress?: (progress: WasmExportProgress) => void;
   onLog?: (log: string) => void;
+}
+
+export function resolveExportFormatInfo(format?: string, outputFilename?: string): { ext: string; mimeType: string } {
+  let ext = 'mp4';
+  if (outputFilename) {
+    const match = outputFilename.match(/\.([a-zA-Z0-9]+)$/);
+    if (match && match[1]) ext = match[1].toLowerCase();
+  } else if (format) {
+    ext = format.toLowerCase();
+  }
+
+  let mimeType = 'video/mp4';
+  if (ext === 'mp3') mimeType = 'audio/mp3';
+  else if (ext === 'webm') mimeType = 'video/webm';
+  else if (ext === 'gif') mimeType = 'image/gif';
+  else if (ext === 'mov') mimeType = 'video/quicktime';
+
+  return { ext, mimeType };
 }
 
 let ffmpegInstance: FFmpeg | null = null;
@@ -54,11 +75,29 @@ export async function getLoadedFFmpeg(
     onLog?.(message);
   });
 
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-  await ffmpeg.load({
-    coreURL: `${baseURL}/ffmpeg-core.js`,
-    wasmURL: `${baseURL}/ffmpeg-core.wasm`,
-  });
+  const primaryBase = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+  const fallbackBase = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+
+  let loaded = false;
+  let lastErr: any = null;
+
+  for (const baseURL of [primaryBase, fallbackBase]) {
+    try {
+      await ffmpeg.load({
+        coreURL: `${baseURL}/ffmpeg-core.js`,
+        wasmURL: `${baseURL}/ffmpeg-core.wasm`,
+      });
+      loaded = true;
+      break;
+    } catch (e) {
+      lastErr = e;
+      console.warn(`[FFmpeg] Failed loading from ${baseURL}, trying next source...`, e);
+    }
+  }
+
+  if (!loaded) {
+    throw new Error(`Failed to load FFmpeg WebAssembly core: ${lastErr?.message || 'Network blocked'}`);
+  }
 
   ffmpegInstance = ffmpeg;
   isLoaded = true;
@@ -88,9 +127,10 @@ export async function exportVideoWithFfmpegWasm(
     onLog,
   } = options;
 
+  const { ext, mimeType } = resolveExportFormatInfo(options.format, options.outputFilename);
   const allocatedFiles = new Set<string>();
   const inputFileName = 'input_media.mp4';
-  const outputFileName = 'scarletcut_export.mp4';
+  const outputFileName = options.outputFilename || `scarletcut_export.${ext}`;
   const inputSizeMb = Number((mediaBlob.size / (1024 * 1024)).toFixed(1));
 
   onProgress?.({
@@ -172,15 +212,30 @@ export async function exportVideoWithFfmpegWasm(
             '-movflags', '+faststart',
             outputFileName,
           ];
+        } else if (ext === 'mp3') {
+          ffmpegArgs = [
+            '-i', inputFileName,
+            '-vn',
+            '-c:a', 'libmp3lame',
+            '-b:a', '256k',
+            outputFileName,
+          ];
+        } else if (ext === 'gif') {
+          ffmpegArgs = [
+            '-i', inputFileName,
+            '-vf', videoScaleFilter ? `${videoScaleFilter},fps=12` : 'fps=12,scale=480:-1:flags=lanczos',
+            outputFileName,
+          ];
         } else {
           ffmpegArgs = [
             '-i', inputFileName,
+            ...(videoScaleFilter ? ['-vf', videoScaleFilter] : []),
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-crf', '22',
             '-c:a', 'aac',
             '-b:a', '192k',
-            '-movflags', '+faststart',
+            ...(ext === 'mov' ? [] : ['-movflags', '+faststart']),
             outputFileName,
           ];
         }
@@ -267,7 +322,7 @@ export async function exportVideoWithFfmpegWasm(
       const copyBuffer = new ArrayBuffer(dataBytes.byteLength);
       new Uint8Array(copyBuffer).set(dataBytes);
 
-      const outputBlob = new Blob([copyBuffer], { type: 'video/mp4' });
+      const outputBlob = new Blob([copyBuffer], { type: mimeType });
       const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
 
       onProgress?.({
@@ -327,11 +382,22 @@ export async function exportVideoWithFfmpegWasm(
   }
 }
 
+export interface AudioTrackInput {
+  blob: Blob;
+  timelineStart: number;
+  duration: number;
+  sourceIn?: number;
+  sourceOut?: number;
+  volume?: number;
+}
+
 export interface CompositionClipInput {
   blob: Blob;
   sourceIn: number;
   sourceOut: number;
   duration: number;
+  mediaId?: string;
+  segments?: PlaybackSegment[];
 }
 
 /**
@@ -348,12 +414,17 @@ export async function exportCompositionWithFfmpegWasm(
     throw new Error('No video clips found on timeline to export.');
   }
 
-  // Single clip fast-path
-  if (clipInputs.length === 1 && clipInputs[0]) {
+  // Single clip fast-path (only if no background audio tracks to multiplex and no transcript cut segments)
+  if (
+    clipInputs.length === 1 &&
+    clipInputs[0] &&
+    (!options.audioInputs || options.audioInputs.length === 0) &&
+    (!clipInputs[0].segments || clipInputs[0].segments.length <= 1)
+  ) {
     const single = clipInputs[0];
     const segment: PlaybackSegment = {
       id: 'seg_clip_0',
-      mediaId: 'clip_0',
+      mediaId: single.mediaId || 'clip_0',
       sourceStart: asSourceSeconds(single.sourceIn),
       sourceEnd: asSourceSeconds(single.sourceOut),
       virtualStart: asVirtualSeconds(0),
@@ -365,8 +436,10 @@ export async function exportCompositionWithFfmpegWasm(
 
   const { onProgress, onLog } = options;
   const ffmpeg = await getLoadedFFmpeg(onProgress, onLog);
+  const { ext, mimeType } = resolveExportFormatInfo(options.format, options.outputFilename);
   const allocatedFiles = new Set<string>();
-  const outputFileName = 'scarletcut_full_composition.mp4';
+  const outputFileName = options.outputFilename || `scarletcut_full_composition.${ext}`;
+  const videoScaleFilter = buildVideoScaleFilter(options.resolution, options.aspectRatio);
 
   const totalDuration = clipInputs.reduce((sum, c) => sum + (c.sourceOut - c.sourceIn), 0);
   const totalInputMb = Number((clipInputs.reduce((sum, c) => sum + c.blob.size, 0) / (1024 * 1024)).toFixed(1));
@@ -387,9 +460,29 @@ export async function exportCompositionWithFfmpegWasm(
       await ffmpeg.writeFile(vFileName, fileData);
       allocatedFiles.add(vFileName);
 
-      manifestLines.push(`file '${vFileName}'`);
-      manifestLines.push(`inpoint ${input.sourceIn.toFixed(3)}`);
-      manifestLines.push(`outpoint ${input.sourceOut.toFixed(3)}`);
+      // BUG-02 Fix: Apply transcript cuts & filler purges from input.segments
+      if (input.segments && input.segments.length > 0) {
+        let hasWrittenSegment = false;
+        for (const seg of input.segments) {
+          const segStart = Math.max(seg.sourceStart, input.sourceIn);
+          const segEnd = Math.min(seg.sourceEnd, input.sourceOut);
+          if (segEnd - segStart > 0.03) {
+            manifestLines.push(`file '${vFileName}'`);
+            manifestLines.push(`inpoint ${segStart.toFixed(3)}`);
+            manifestLines.push(`outpoint ${segEnd.toFixed(3)}`);
+            hasWrittenSegment = true;
+          }
+        }
+        if (!hasWrittenSegment) {
+          manifestLines.push(`file '${vFileName}'`);
+          manifestLines.push(`inpoint ${input.sourceIn.toFixed(3)}`);
+          manifestLines.push(`outpoint ${input.sourceOut.toFixed(3)}`);
+        }
+      } else {
+        manifestLines.push(`file '${vFileName}'`);
+        manifestLines.push(`inpoint ${input.sourceIn.toFixed(3)}`);
+        manifestLines.push(`outpoint ${input.sourceOut.toFixed(3)}`);
+      }
     }
 
     const manifestName = 'composition_manifest.txt';
@@ -398,47 +491,255 @@ export async function exportCompositionWithFfmpegWasm(
     allocatedFiles.add(manifestName);
     allocatedFiles.add(outputFileName);
 
+    // BUG-04 Fix: Allocate Background Audio Track files (Track 3)
+    const bgAudioInputs = options.audioInputs || [];
+    const bgAudioFiles: { fileName: string; delayMs: number; volume: number }[] = [];
+    for (let j = 0; j < bgAudioInputs.length; j++) {
+      const a = bgAudioInputs[j]!;
+      const aFileName = `bg_audio_${j}.mp3`;
+      const aData = await fetchFile(a.blob);
+      await ffmpeg.writeFile(aFileName, aData);
+      allocatedFiles.add(aFileName);
+      bgAudioFiles.push({
+        fileName: aFileName,
+        delayMs: Math.max(0, Math.round((a.timelineStart || 0) * 1000)),
+        volume: a.volume ?? 0.8,
+      });
+    }
+
+    // BUG-03 Fix: Attach subtitles ASS script
+    let subFileName: string | undefined;
+    if (options.includeSubtitles && tokens && tokens.length > 0 && ext !== 'mp3' && ext !== 'gif') {
+      try {
+        const assScript = generateAssSubtitleScript(tokens, {});
+        subFileName = 'composition_subtitles.ass';
+        await ffmpeg.writeFile(subFileName, new TextEncoder().encode(assScript));
+        allocatedFiles.add(subFileName);
+      } catch (assErr) {
+        console.warn('[WASM Exporter] Composition subtitle script build skipped:', assErr);
+      }
+    }
+
     onProgress?.({
-      stage: `Concatenating ${clipInputs.length} clips into unified ${totalDuration.toFixed(1)}s timeline video...`,
+      stage: `Concatenating ${clipInputs.length} clips into unified ${totalDuration.toFixed(1)}s timeline ${ext.toUpperCase()}...`,
       percent: 40,
       memfsAllocatedMb: totalInputMb,
     });
 
     let execSuccess = false;
-    try {
+
+    if (ext === 'mp3') {
+      onProgress?.({
+        stage: `Extracting and mixing audio from timeline into MP3...`,
+        percent: 45,
+        memfsAllocatedMb: totalInputMb,
+      });
+      if (bgAudioFiles.length > 0) {
+        const inputArgs: string[] = ['-f', 'concat', '-safe', '0', '-i', manifestName];
+        for (const bg of bgAudioFiles) inputArgs.push('-i', bg.fileName);
+        const filterChains: string[] = [];
+        const mixLabels: string[] = ['0:a'];
+        for (let k = 0; k < bgAudioFiles.length; k++) {
+          const bg = bgAudioFiles[k]!;
+          const label = `bga${k}`;
+          if (bg.delayMs > 0) {
+            filterChains.push(`[${k + 1}:a]adelay=${bg.delayMs}|${bg.delayMs},volume=${bg.volume}[${label}]`);
+          } else {
+            filterChains.push(`[${k + 1}:a]volume=${bg.volume}[${label}]`);
+          }
+          mixLabels.push(`[${label}]`);
+        }
+        filterChains.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first[aout]`);
+        try {
+          const exitCode = await ffmpeg.exec([
+            ...inputArgs,
+            '-filter_complex', filterChains.join(';'),
+            '-map', '[aout]',
+            '-vn',
+            '-c:a', 'libmp3lame',
+            '-b:a', '256k',
+            outputFileName,
+          ]);
+          if (exitCode === 0) execSuccess = true;
+        } catch {}
+      }
+
+      if (!execSuccess) {
+        try {
+          const exitCode = await ffmpeg.exec([
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', manifestName,
+            '-vn',
+            '-c:a', 'libmp3lame',
+            '-b:a', '256k',
+            outputFileName,
+          ]);
+          if (exitCode === 0) execSuccess = true;
+        } catch (err) {
+          console.warn('[WASM Exporter] libmp3lame failed, trying fallback:', err);
+        }
+      }
+      if (!execSuccess) {
+        const fallbackCode = await ffmpeg.exec([
+          '-f', 'concat',
+          '-safe', '0',
+          '-i', manifestName,
+          '-vn',
+          '-c:a', 'aac',
+          '-b:a', '256k',
+          outputFileName,
+        ]);
+        if (fallbackCode === 0) execSuccess = true;
+      }
+    } else if (ext === 'gif') {
+      onProgress?.({
+        stage: `Rendering animated GIF from ${clipInputs.length} clips...`,
+        percent: 45,
+        memfsAllocatedMb: totalInputMb,
+      });
+      const gifFilter = videoScaleFilter ? `${videoScaleFilter},fps=12` : 'fps=12,scale=480:-1:flags=lanczos';
       const exitCode = await ffmpeg.exec([
         '-f', 'concat',
         '-safe', '0',
         '-i', manifestName,
-        '-c', 'copy',
-        '-movflags', '+faststart',
+        '-vf', gifFilter,
         outputFileName,
       ]);
       if (exitCode === 0) execSuccess = true;
-    } catch (err) {
-      console.warn('[WASM Exporter] Multi-clip stream-copy concat failed, attempting filter encode:', err);
-    }
-
-    if (!execSuccess) {
+    } else if (ext === 'webm') {
       onProgress?.({
-        stage: 'Re-encoding full timeline composition with unified audio/video sync...',
-        percent: 65,
+        stage: `Encoding WebM composition from ${clipInputs.length} clips...`,
+        percent: 45,
         memfsAllocatedMb: totalInputMb,
       });
-      // Fallback: re-encode via concat demuxer
-      const fallbackCode = await ffmpeg.exec([
+      const webmFilters: string[] = [];
+      if (videoScaleFilter) webmFilters.push(videoScaleFilter);
+      const vfArgs = webmFilters.length > 0 ? ['-vf', webmFilters.join(',')] : [];
+      const exitCode = await ffmpeg.exec([
         '-f', 'concat',
         '-safe', '0',
         '-i', manifestName,
-        '-c:v', 'libx264',
-        '-preset', 'ultrafast',
-        '-crf', '23',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-movflags', '+faststart',
+        ...vfArgs,
+        '-c:v', 'libvpx',
+        '-b:v', '1.5M',
+        '-c:a', 'libvorbis',
         outputFileName,
       ]);
-      if (fallbackCode === 0) execSuccess = true;
+      if (exitCode === 0) execSuccess = true;
+    } else {
+      // MP4 or MOV
+      if (!videoScaleFilter && !subFileName && bgAudioFiles.length === 0 && ext === 'mp4' && options.mode === 'stream-copy') {
+        try {
+          const exitCode = await ffmpeg.exec([
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', manifestName,
+            '-c', 'copy',
+            '-movflags', '+faststart',
+            outputFileName,
+          ]);
+          if (exitCode === 0) execSuccess = true;
+        } catch (err) {
+          console.warn('[WASM Exporter] Multi-clip stream-copy concat failed, attempting filter encode:', err);
+        }
+      }
+
+      if (!execSuccess) {
+        onProgress?.({
+          stage: 'Re-encoding full timeline composition with resolution scaling & audio/video sync...',
+          percent: 60,
+          memfsAllocatedMb: totalInputMb,
+        });
+
+        // BUG-04 & BUG-03: Assemble filter_complex for both video filter/subtitles and background audio mixing
+        const inputArgs: string[] = ['-f', 'concat', '-safe', '0', '-i', manifestName];
+        for (const bg of bgAudioFiles) inputArgs.push('-i', bg.fileName);
+
+        const filterChains: string[] = [];
+        let videoMap = '0:v';
+        if (videoScaleFilter || subFileName) {
+          const vfParts: string[] = [];
+          if (videoScaleFilter) vfParts.push(videoScaleFilter);
+          if (subFileName) vfParts.push(`ass=${subFileName}`);
+          filterChains.push(`[0:v]${vfParts.join(',')}[vout]`);
+          videoMap = '[vout]';
+        }
+
+        let audioMap = '0:a?';
+        if (bgAudioFiles.length > 0) {
+          const mixLabels: string[] = ['0:a'];
+          for (let k = 0; k < bgAudioFiles.length; k++) {
+            const bg = bgAudioFiles[k]!;
+            const label = `bga${k}`;
+            if (bg.delayMs > 0) {
+              filterChains.push(`[${k + 1}:a]adelay=${bg.delayMs}|${bg.delayMs},volume=${bg.volume}[${label}]`);
+            } else {
+              filterChains.push(`[${k + 1}:a]volume=${bg.volume}[${label}]`);
+            }
+            mixLabels.push(`[${label}]`);
+          }
+          filterChains.push(`${mixLabels.join('')}amix=inputs=${mixLabels.length}:duration=first:dropout_transition=2[aout]`);
+          audioMap = '[aout]';
+        }
+
+        const filterArgs = filterChains.length > 0 ? ['-filter_complex', filterChains.join(';')] : [];
+
+        try {
+          const exitCode = await ffmpeg.exec([
+            ...inputArgs,
+            ...filterArgs,
+            '-map', videoMap,
+            '-map', audioMap,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '23',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            ...(ext === 'mov' ? [] : ['-movflags', '+faststart']),
+            outputFileName,
+          ]);
+          if (exitCode === 0) execSuccess = true;
+        } catch (err) {
+          console.warn('[WASM Exporter] Composition encode with subtitles/audio mix failed, retrying scale-only:', err);
+        }
+
+        if (!execSuccess && subFileName && videoScaleFilter) {
+          try {
+            const retryCode = await ffmpeg.exec([
+              '-f', 'concat',
+              '-safe', '0',
+              '-i', manifestName,
+              '-vf', videoScaleFilter,
+              '-c:v', 'libx264',
+              '-preset', 'ultrafast',
+              '-crf', '23',
+              '-c:a', 'aac',
+              '-b:a', '192k',
+              ...(ext === 'mov' ? [] : ['-movflags', '+faststart']),
+              outputFileName,
+            ]);
+            if (retryCode === 0) execSuccess = true;
+          } catch {}
+        }
+
+        if (!execSuccess) {
+          // Fallback: raw re-encode
+          const fallbackCode = await ffmpeg.exec([
+            '-f', 'concat',
+            '-safe', '0',
+            '-i', manifestName,
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-crf', '23',
+            '-c:a', 'aac',
+            '-b:a', '192k',
+            ...(ext === 'mov' ? [] : ['-movflags', '+faststart']),
+            outputFileName,
+          ]);
+          if (fallbackCode === 0) execSuccess = true;
+        }
+      }
     }
 
     onProgress?.({
@@ -450,7 +751,7 @@ export async function exportCompositionWithFfmpegWasm(
     const outData = (await ffmpeg.readFile(outputFileName)) as Uint8Array;
     const copyBuffer = new ArrayBuffer(outData.byteLength);
     new Uint8Array(copyBuffer).set(outData);
-    const finalBlob = new Blob([copyBuffer], { type: 'video/mp4' });
+    const finalBlob = new Blob([copyBuffer], { type: mimeType });
 
     onProgress?.({ stage: 'Export Complete!', percent: 100, memfsAllocatedMb: 0 });
 

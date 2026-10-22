@@ -46,9 +46,12 @@ export function processVocalPurifierPcm(
     prevOut = y;
   }
 
-  // Stage 2: Soft RMS Noise Gate with 10ms window smoothing
+  // Stage 2: Soft RMS Noise Gate with attack/release smoothing to eliminate boundary clicking
   const winSize = Math.max(1, Math.floor(0.01 * sampleRate));
   const finalOut = new Float32Array(hpOut.length);
+  let currentGain = 1.0;
+  const attackAlpha = 0.08;
+  const releaseAlpha = 0.02;
 
   for (let offset = 0; offset < hpOut.length; offset += winSize) {
     const end = Math.min(hpOut.length, offset + winSize);
@@ -58,10 +61,12 @@ export function processVocalPurifierPcm(
       sumSq += s * s;
     }
     const rms = Math.sqrt(sumSq / (end - offset));
-    const gain = rms < gateLinear ? gateFloor : 1.0;
+    const targetGain = rms < gateLinear ? gateFloor : 1.0;
 
     for (let i = offset; i < end; i++) {
-      const sample = (hpOut[i] ?? 0) * gain;
+      const alpha = targetGain > currentGain ? attackAlpha : releaseAlpha;
+      currentGain += alpha * (targetGain - currentGain);
+      const sample = (hpOut[i] ?? 0) * currentGain;
       finalOut[i] = Math.max(-1, Math.min(1, sample));
     }
   }
@@ -78,10 +83,12 @@ export function computeAudioDuckingGain(
   activeWordRanges: readonly { start: number; end: number; deleted?: boolean }[],
   duckedGain = 0.22,
   normalGain = 1.0,
-  lookaheadSec = 0.08
+  lookaheadSec = 0.08,
+  sourceOffsetSec = 0
 ): number {
+  const effectiveSourceTime = currentTimeSec - sourceOffsetSec;
   const isSpeaking = activeWordRanges.some(
-    w => !w.deleted && currentTimeSec >= w.start - lookaheadSec && currentTimeSec <= w.end + lookaheadSec
+    w => !w.deleted && effectiveSourceTime >= w.start - lookaheadSec && effectiveSourceTime <= w.end + lookaheadSec
   );
   return isSpeaking ? duckedGain : normalGain;
 }

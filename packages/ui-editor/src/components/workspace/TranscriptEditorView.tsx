@@ -99,10 +99,14 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
     }
   };
 
-  // Keyboard shortcut: Backspace or Delete to ripple-cut selected tokens
+  // Keyboard shortcut: Backspace or Delete to ripple-cut selected tokens (BUG-22 Fix: ignore when focused in input/textarea)
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (editingTokenId) return; // Don't cut while editing text
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
 
       if (e.key === 'Backspace' || e.key === 'Delete') {
         if (selectedTokenIds.size > 0) {
@@ -489,25 +493,25 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
             Generate speech tokens to enable instantaneous ripple cuts, backspace cuts, and overdubbing on this clip.
           </div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
-            {onFastGenerateTranscript && (
+            {onTranscribeCurrentMedia && (
               <ScarletButton
                 variant="primary"
                 size="sm"
-                icon={<IconLightning size={14} color="#FFFFFF" />}
-                onClick={() => onFastGenerateTranscript(activeMediaId ?? 'asset_1')}
-              >
-                Fast Generate Instant Transcript (0ms)
-              </ScarletButton>
-            )}
-            {onTranscribeCurrentMedia && (
-              <ScarletButton
-                variant="secondary"
-                size="sm"
-                icon={<IconSparkles size={14} color="#2ED573" />}
+                icon={<IconSparkles size={14} color="#FFFFFF" />}
                 onClick={onTranscribeCurrentMedia}
                 disabled={isTranscribing}
               >
-                Transcribe with WebGPU Whisper
+                {isTranscribing ? 'Transcribing with Whisper...' : 'Transcribe with WebGPU Whisper'}
+              </ScarletButton>
+            )}
+            {onFastGenerateTranscript && (
+              <ScarletButton
+                variant="secondary"
+                size="sm"
+                icon={<IconLightning size={14} color="#FFA502" />}
+                onClick={() => onFastGenerateTranscript(activeMediaId ?? 'asset_1')}
+              >
+                Load Demo Dummy Transcript
               </ScarletButton>
             )}
           </div>

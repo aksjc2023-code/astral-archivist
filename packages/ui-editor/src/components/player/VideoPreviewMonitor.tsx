@@ -125,6 +125,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     if (e.target.files && e.target.files.length > 0) {
       onBrowseFilesSelected?.(Array.from(e.target.files));
     }
+    // BUG-15 Fix: Reset value so re-selecting same file fires change event
+    e.target.value = '';
   };
 
   // Interactive Movable & Resizable Sticker State
@@ -317,7 +319,15 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
 
     try {
+      // Temporarily attenuate audio crackle during discontinuous cut leaps
+      const prevMuted = v.muted;
+      v.muted = true;
       v.currentTime = targetSec;
+      setTimeout(() => {
+        if (v && !isMuted && !trackStates?.['track_video']?.muted) {
+          v.muted = prevMuted;
+        }
+      }, 40);
     } catch {
       activeSeekSeqRef.current = 0;
       activeSeekTargetRef.current = null;
@@ -379,13 +389,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
       return;
     }
 
-    // Verify whether the observed currentTime converged to active target within seek tolerance
-    const delta = Math.abs(v.currentTime - activeSeekTargetRef.current);
-    if (delta > SEEK_EPSILON) {
-      // Stale seeked event from an earlier generation or unfinished decoder seek; do not unlock prematurely!
-      return;
-    }
-
+    // Hardware decoders often snap to the nearest I-frame / keyframe (up to ~0.35s away)
+    // Always unlock so the UI never freezes in seek-lock mode
     if (seekTimeoutRef.current) {
       window.clearTimeout(seekTimeoutRef.current);
       seekTimeoutRef.current = null;
@@ -435,10 +440,11 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     };
   }, []);
 
-  // Active word token for live karaoke subtitle overlay
-  const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
+  // BUG-16 Fix: Active word token for live karaoke subtitle overlay aligned with source time offset
+  const effectiveSourceTime = sourceTimeOffset !== undefined ? sourceTimeOffset : currentTime;
+  const activeToken = tokens.find(t => !t.deleted && effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
   const currentSentenceTokens = tokens.filter(
-    t => !t.deleted && Math.abs(t.start - currentTime) < 3.0
+    t => !t.deleted && Math.abs(t.start - effectiveSourceTime) < 3.0
   );
 
   const timecode = formatTimecode(currentTime);
@@ -526,15 +532,15 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     if (!v) return;
     const vidDuration = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : 10;
     const rawTarget = sourceTimeOffset !== undefined ? sourceTimeOffset : currentTime;
-    if (rawTarget > vidDuration + 0.05) {
-      console.warn(`[VideoPreviewMonitor] Target ${rawTarget.toFixed(2)}s exceeds video duration ${vidDuration.toFixed(2)}s; clamping cleanly without wrap.`);
-    }
     const targetOffset = Math.max(0, Math.min(vidDuration, rawTarget));
 
-    if (Math.abs(v.currentTime - targetOffset) > 0.30) {
+    // When playing, allow video to play continuously without micro-seeking stutter unless drift exceeds 0.15s
+    // When paused (or scrubbing), sync with high precision (0.04s)
+    const driftThreshold = isPlaying ? 0.15 : 0.04;
+    if (Math.abs(v.currentTime - targetOffset) > driftThreshold) {
       requestVideoSeek(targetOffset);
     }
-  }, [currentTime, sourceTimeOffset]);
+  }, [currentTime, sourceTimeOffset, isPlaying]);
 
   // Compute live CSS filters from Color Grading, LUT, chroma, and highlight/shadow tools
   const computedCssFilter = useMemo(() => {
@@ -672,6 +678,16 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             <div
               id="empty-monitor-stage"
               data-testid="empty-monitor-stage"
+              onDragOver={e => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }}
+              onDrop={e => {
+                e.preventDefault();
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                  onBrowseFilesSelected?.(Array.from(e.dataTransfer.files));
+                }
+              }}
               style={{
                 width: '100%',
                 height: '100%',

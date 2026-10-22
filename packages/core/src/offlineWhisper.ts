@@ -277,7 +277,7 @@ export type WhisperRunnerFactory = (
  */
 export function isWebGpuHardwareError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
-  return /webgpu|device[\s._-]?lost|adapter|vram|out of memory|shader compilation|hardware acceleration|navigator\.gpu|not supported/i.test(message);
+  return /webgpu|device[\s._-]?lost|adapter|vram|out of memory|shader compilation|hardware acceleration|navigator\.gpu|not supported|timed out|timeout|stalled/i.test(message);
 }
 
 export class OfflineWhisperEngine {
@@ -286,7 +286,7 @@ export class OfflineWhisperEngine {
 
   constructor(config: WhisperEngineConfig = {}) {
     this.config = {
-      modelId: config.modelId ?? 'onnx-community/whisper-tiny.en',
+      modelId: config.modelId ?? 'Xenova/whisper-tiny.en',
       preferredDevice: config.preferredDevice ?? 'webgpu',
       dtype: config.dtype ?? 'q8',
       chunkLengthSec: config.chunkLengthSec ?? 30,

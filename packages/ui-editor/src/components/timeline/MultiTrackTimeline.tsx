@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { TimelineClip, MarkerFlag, PlaybackSegment, formatTimecode } from '@astral/core';
+import { TimelineClip, MarkerFlag, PlaybackSegment, WordToken, formatTimecode } from '@astral/core';
 import {
   IconEye,
   IconLock,
@@ -42,6 +42,11 @@ export interface MultiTrackTimelineProps {
   onDeleteMarker?: (markerId: string) => void;
   onEditClipTitle?: (clipId: string, newTitle: string) => void;
   onClipTransitionDurationChange?: (clipId: string, durationSec: number) => void;
+  onFilesDropped?: (files: File[], dropTimeSec: number, trackId: string) => void;
+  tokens?: WordToken[];
+  onToggleDeleteToken?: (tokenId: string) => void;
+  onEditTokenText?: (tokenId: string, newText: string) => void;
+  onSeekToSourceTime?: (sourceTime: number) => void;
 }
 
 const getClipStart = (c: TimelineClip): number => c.timelineStart ?? c.sourceStart ?? 0;
@@ -74,6 +79,11 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   onDeleteMarker,
   onEditClipTitle,
   onClipTransitionDurationChange,
+  onFilesDropped,
+  tokens = [],
+  onToggleDeleteToken,
+  onEditTokenText,
+  onSeekToSourceTime,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -249,7 +259,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     new Set(
       clips
         .map(c => c.trackId)
-        .filter(id => !['track_title', 'track_video', 'track_audio'].includes(id))
+        .filter(id => !['track_effects', 'track_stickers', 'track_title', 'track_video', 'track_audio', 'track_custom_stickers'].includes(id))
     )
   ).sort();
 
@@ -296,20 +306,26 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         const clipLeft = startSec * pxPerSec;
         const clipRight = clipLeft + durSec * pxPerSec;
 
-        let trackTop = 64;
-        let trackBottom = 134;
-        if (clip.trackId === 'track_title') {
+        let trackTop = 124;
+        let trackBottom = 200;
+        if (clip.trackId === 'track_effects') {
           trackTop = 28;
-          trackBottom = 64;
+          trackBottom = 60;
+        } else if (clip.trackId === 'track_stickers' || clip.trackId === 'track_custom_stickers') {
+          trackTop = 60;
+          trackBottom = 92;
+        } else if (clip.trackId === 'track_title') {
+          trackTop = 92;
+          trackBottom = 124;
         } else if (clip.trackId === 'track_video') {
-          trackTop = 64;
-          trackBottom = 134;
+          trackTop = 124;
+          trackBottom = 200;
         } else if (clip.trackId === 'track_audio') {
-          trackTop = 134;
-          trackBottom = 178;
+          trackTop = 200;
+          trackBottom = 244;
         } else {
           const customIdx = customTrackIds.indexOf(clip.trackId);
-          trackTop = 178 + (customIdx >= 0 ? customIdx : 0) * 40;
+          trackTop = 244 + (customIdx >= 0 ? customIdx : 0) * 40;
           trackBottom = trackTop + 40;
         }
 
@@ -338,16 +354,23 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     };
   }, [isMarqueeActive, marqueeStart, clips, pxPerSec, customTrackIds, onSelectClips, onSelectClip]);
 
-  // Drag & Drop from Library / Effects onto Timeline
+  // Drag & Drop from Library / Effects onto Timeline (include scrollTop and exact track heights)
   const resolveTrackFromClientY = (clientY: number) => {
     const container = scrollContainerRef.current;
     if (!container) return { trackId: 'track_video', trackName: 'Main Video Track' };
     const rect = container.getBoundingClientRect();
-    const y = clientY - rect.top;
-    if (y < 64) return { trackId: 'track_title', trackName: 'Titles Track' };
-    if (y < 134) return { trackId: 'track_video', trackName: 'Main Video Track' };
-    if (y < 178) return { trackId: 'track_audio', trackName: 'Audio Track' };
-    return { trackId: 'track_custom_stickers', trackName: 'Overlays & Stickers Track' };
+    const y = clientY - rect.top + (container.scrollTop || 0);
+    if (y < 60) return { trackId: 'track_effects', trackName: 'Effects & Filters Track' };
+    if (y < 92) return { trackId: 'track_stickers', trackName: 'Stickers & Overlays Track' };
+    if (y < 124) return { trackId: 'track_title', trackName: 'Titles Track' };
+    if (y < 200) return { trackId: 'track_video', trackName: 'Main Video Track' };
+    if (y < 244) return { trackId: 'track_audio', trackName: 'Audio Track' };
+    const customIdx = Math.floor((y - 244) / 40);
+    if (customIdx >= 0 && customIdx < customTrackIds.length) {
+      const tid = customTrackIds[customIdx]!;
+      return { trackId: tid, trackName: tid.replace('track_custom_', 'Track ') };
+    }
+    return { trackId: 'track_stickers', trackName: 'Stickers & Overlays Track' };
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -373,6 +396,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     const clickTime = calculateTimeFromClientX(e.clientX);
     const { trackId } = resolveTrackFromClientY(e.clientY);
     setDropIndicator(null);
+
+    // BUG-21 Fix: Check if real media files were dragged directly from the desktop/OS
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const files = Array.from(e.dataTransfer.files);
+      onFilesDropped?.(files, clickTime, trackId);
+      return;
+    }
 
     let rawData = e.dataTransfer.getData('application/scarlet-item');
     if (!rawData) {
@@ -420,9 +450,60 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
   const playheadPositionPx = currentTime * pxPerSec;
 
+  const effectClips = clips.filter(c => c.trackId === 'track_effects' || (c as any).isFilter);
+  const stickerClips = clips.filter(c => c.trackId === 'track_stickers' || c.trackId === 'track_custom_stickers' || c.title.startsWith('★ ') || (c as any).isTransition || c.title.startsWith('⧉ '));
   const titleClips = clips.filter(c => c.trackId === 'track_title');
   const videoClips = clips.filter(c => c.trackId === 'track_video');
   const audioClips = clips.filter(c => c.trackId === 'track_audio');
+
+  // Group continuous transcript tokens into phrase-level caption blocks for timeline display
+  interface CaptionTimelineBlock {
+    id: string;
+    text: string;
+    startSec: number;
+    endSec: number;
+    tokens: WordToken[];
+    deleted: boolean;
+    isFiller: boolean;
+  }
+
+  const captionBlocks = React.useMemo<CaptionTimelineBlock[]>(() => {
+    if (!tokens || tokens.length === 0) return [];
+    const validTokens = tokens.filter(t => !t.isPause && t.text.trim().length > 0);
+    if (validTokens.length === 0) return [];
+
+    const blocks: CaptionTimelineBlock[] = [];
+    let currentBlockTokens: WordToken[] = [];
+
+    for (let i = 0; i < validTokens.length; i++) {
+      const tok = validTokens[i]!;
+      currentBlockTokens.push(tok);
+
+      const isTerminalPunctuation = /[.!?]$/.test(tok.text.trim());
+      const nextTok = validTokens[i + 1];
+      const hasGap = nextTok ? (nextTok.start - tok.end > 0.45) : false;
+      const isWordLimit = currentBlockTokens.length >= 6;
+
+      if (isTerminalPunctuation || hasGap || isWordLimit || i === validTokens.length - 1) {
+        const startSec = currentBlockTokens[0]!.start;
+        const endSec = currentBlockTokens[currentBlockTokens.length - 1]!.end;
+        const text = currentBlockTokens.map(t => t.text).join(' ');
+        const allDeleted = currentBlockTokens.every(t => t.deleted);
+        const hasFiller = currentBlockTokens.some(t => t.isFiller);
+        blocks.push({
+          id: `caption_${currentBlockTokens[0]!.id}`,
+          text,
+          startSec,
+          endSec: Math.max(startSec + 0.3, endSec),
+          tokens: [...currentBlockTokens],
+          deleted: allDeleted,
+          isFiller: hasFiller,
+        });
+        currentBlockTokens = [];
+      }
+    }
+    return blocks;
+  }, [tokens]);
 
   return (
     <div
@@ -472,10 +553,92 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           + Track
         </button>
 
-        {/* Track 1 Header: Titles */}
+        {/* Track 1 Header: Effects & Filters (⚡ FX) */}
         <div
           style={{
-            height: '36px',
+            height: '32px',
+            borderBottom: '1px solid #2B303A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 6px',
+            color: '#EB3B5A',
+          }}
+          title="Effects & Filters Track"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ fontSize: '11px' }}>⚡</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Effects</span>
+          </div>
+          <div style={{ display: 'flex', gap: '2px' }}>
+            <button
+              id="btn-hide-track_effects"
+              data-testid="btn-hide-track_effects"
+              type="button"
+              title={activeTrackStates['track_effects']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_effects')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={11} color={activeTrackStates['track_effects']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              id="btn-lock-track_effects"
+              data-testid="btn-lock-track_effects"
+              type="button"
+              title={activeTrackStates['track_effects']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_effects')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={11} color={activeTrackStates['track_effects']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
+          </div>
+        </div>
+
+        {/* Track 2 Header: Stickers & Overlays (★ Overlay) */}
+        <div
+          style={{
+            height: '32px',
+            borderBottom: '1px solid #2B303A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 6px',
+            color: '#FA8231',
+          }}
+          title="Stickers & Overlays Track"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ fontSize: '11px' }}>★</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Stickers</span>
+          </div>
+          <div style={{ display: 'flex', gap: '2px' }}>
+            <button
+              id="btn-hide-track_stickers"
+              data-testid="btn-hide-track_stickers"
+              type="button"
+              title={activeTrackStates['track_stickers']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_stickers')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={11} color={activeTrackStates['track_stickers']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              id="btn-lock-track_stickers"
+              data-testid="btn-lock-track_stickers"
+              type="button"
+              title={activeTrackStates['track_stickers']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_stickers')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={11} color={activeTrackStates['track_stickers']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
+          </div>
+        </div>
+
+        {/* Track 3 Header: Titles & Subtitles */}
+        <div
+          style={{
+            height: '32px',
             borderBottom: '1px solid #2B303A',
             display: 'flex',
             alignItems: 'center',
@@ -483,11 +646,26 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             padding: '0 6px',
             color: '#8854D0',
           }}
-          title="Titles & Subtitles Track"
+          title="Titles & Subtitles / Captions Track"
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-            <IconTitles size={13} color="#8854D0" />
-            <span style={{ fontSize: '10px', fontWeight: 600 }}>Titles</span>
+            <span style={{ fontSize: '11px' }}>💬</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Captions</span>
+            {captionBlocks.length > 0 && (
+              <span
+                style={{
+                  fontSize: '8px',
+                  backgroundColor: '#8854D0',
+                  color: '#FFFFFF',
+                  borderRadius: '8px',
+                  padding: '1px 4px',
+                  fontWeight: 700,
+                  marginLeft: '2px',
+                }}
+              >
+                {captionBlocks.length}
+              </span>
+            )}
           </div>
           <div style={{ display: 'flex', gap: '2px' }}>
             <button
@@ -992,10 +1170,212 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             </div>
           </div>
 
-          {/* Track 1 — Titles & Captions Strip */}
+          {/* Track 1 — Effects & Filters Strip */}
           <div
             style={{
-              height: '36px',
+              height: '32px',
+              borderBottom: '1px solid #1E232B',
+              position: 'relative',
+              backgroundColor: '#15171C',
+            }}
+          >
+            {effectClips.map(clip => {
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
+              const isTrackHidden = activeTrackStates['track_effects']?.hidden;
+              const isTrackLocked = activeTrackStates['track_effects']?.locked;
+              return (
+                <div
+                  key={clip.id}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_effects')}
+                  title={`[Effect] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim, Delete to remove`}
+                  style={{
+                    position: 'absolute',
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
+                    height: '24px',
+                    top: '4px',
+                    backgroundColor: '#EB3B5A',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #FF6B81',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 8px',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : '0 2px 6px rgba(235, 59, 90, 0.4)',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackHidden ? 0.3 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
+                    transition: 'border 0.12s ease, opacity 0.15s ease',
+                  }}
+                >
+                  {/* Trim In/Out Yellow Handles when Selected */}
+                  {isSelected && (
+                    <>
+                      <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend effect in-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_effects')}
+                        style={{
+                          position: 'absolute',
+                          left: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
+                        }}
+                      />
+                      <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend effect out-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_effects')}
+                        style={{
+                          position: 'absolute',
+                          right: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
+                        }}
+                      />
+                    </>
+                  )}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Track 2 — Stickers & Overlays Strip */}
+          <div
+            style={{
+              height: '32px',
+              borderBottom: '1px solid #1E232B',
+              position: 'relative',
+              backgroundColor: '#14171C',
+            }}
+          >
+            {stickerClips.map(clip => {
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
+              const isTrackHidden = activeTrackStates['track_stickers']?.hidden;
+              const isTrackLocked = activeTrackStates['track_stickers']?.locked;
+              return (
+                <div
+                  key={clip.id}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_stickers')}
+                  title={`[Sticker/Overlay] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim, Delete to remove`}
+                  style={{
+                    position: 'absolute',
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
+                    height: '24px',
+                    top: '4px',
+                    backgroundColor: clip.color || '#FA8231',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #FFA502',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 8px',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : '0 2px 6px rgba(250, 130, 49, 0.4)',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackHidden ? 0.3 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
+                    transition: 'border 0.12s ease, opacity 0.15s ease',
+                  }}
+                >
+                  {/* Trim In/Out Yellow Handles when Selected */}
+                  {isSelected && (
+                    <>
+                      <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend sticker in-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_stickers')}
+                        style={{
+                          position: 'absolute',
+                          left: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
+                        }}
+                      />
+                      <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag to trim/extend sticker out-point"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_stickers')}
+                        style={{
+                          position: 'absolute',
+                          right: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
+                        }}
+                      />
+                    </>
+                  )}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Track 3 — Titles & Captions Strip */}
+          <div
+            style={{
+              height: '32px',
               borderBottom: '1px solid #1E232B',
               position: 'relative',
               backgroundColor: '#14171C',
@@ -1097,6 +1477,76 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected ? '4px' : '0' }}>
                     {clip.title}
                   </span>
+                </div>
+              );
+            })}
+
+            {/* Transcript Captions / Subtitle Blocks overlayed on Track 3 */}
+            {captionBlocks.map(block => {
+              const isActive = currentTime >= block.startSec && currentTime <= block.endSec;
+              const blockLeft = block.startSec * pxPerSec;
+              const blockWidth = Math.max(18, (block.endSec - block.startSec) * pxPerSec);
+              const isTrackHidden = activeTrackStates['track_title']?.hidden;
+              const isTrackLocked = activeTrackStates['track_title']?.locked;
+
+              return (
+                <div
+                  key={block.id}
+                  id={`timeline-caption-${block.id}`}
+                  data-testid={`timeline-caption-${block.id}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSeekToSourceTime?.(block.startSec);
+                  }}
+                  onDoubleClick={e => {
+                    e.stopPropagation();
+                    const newText = prompt('Edit Caption Subtitle:', block.text);
+                    if (newText !== null && newText.trim() && block.tokens[0]) {
+                      onEditTokenText?.(block.tokens[0].id, newText.trim());
+                    }
+                  }}
+                  title={`[Subtitle Block] "${block.text}" (${block.startSec.toFixed(1)}s - ${block.endSec.toFixed(1)}s)\nClick to seek • Double-click to edit text`}
+                  style={{
+                    position: 'absolute',
+                    left: `${blockLeft}px`,
+                    width: `${blockWidth}px`,
+                    height: '24px',
+                    top: '4px',
+                    backgroundColor: block.deleted
+                      ? 'rgba(235, 59, 90, 0.25)'
+                      : block.isFiller
+                      ? 'rgba(255, 168, 1, 0.25)'
+                      : isActive
+                      ? 'rgba(136, 84, 208, 0.95)'
+                      : 'rgba(75, 40, 130, 0.65)',
+                    border: isActive
+                      ? '2px solid #00F0FF'
+                      : block.deleted
+                      ? '1px dashed #FF4757'
+                      : block.isFiller
+                      ? '1px dashed #FFA502'
+                      : '1px solid rgba(155, 99, 230, 0.6)',
+                    borderRadius: '5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 6px',
+                    color: block.deleted ? '#FF6B81' : '#FFFFFF',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    boxShadow: isActive ? '0 0 12px rgba(0, 240, 255, 0.8)' : 'none',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    textOverflow: 'ellipsis',
+                    textDecoration: block.deleted ? 'line-through' : 'none',
+                    cursor: isTrackLocked ? 'not-allowed' : 'pointer',
+                    opacity: isTrackHidden ? 0.25 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
+                    transition: 'all 0.12s ease',
+                    zIndex: isActive ? 12 : 5,
+                  }}
+                >
+                  <span style={{ fontSize: '9px', marginRight: '4px', opacity: 0.8 }}>💬</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{block.text}</span>
                 </div>
               );
             })}
@@ -1294,7 +1744,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     </div>
                   </div>
 
-                  {/* Lavender-Blue Waveform Strip Below (Page 1) */}
+                  {/* Lavender-Blue Waveform Strip Below (Page 1) with Visual Ripple Cut Notches */}
                   <div
                     style={{
                       height: '24px',
@@ -1303,6 +1753,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                       alignItems: 'center',
                       justifyContent: 'space-around',
                       padding: '0 4px',
+                      position: 'relative',
                     }}
                   >
                     {/* Simulated Audio Bars */}
@@ -1320,6 +1771,40 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         />
                       );
                     })}
+
+                    {/* Visual Cut Notches from Deleted Transcript Tokens & Pauses */}
+                    {tokens
+                      .filter(t => t.deleted && (!clip.mediaId || t.mediaId === clip.mediaId))
+                      .map(delTok => {
+                        const inPoint = clip.sourceIn ?? 0;
+                        if (delTok.end < inPoint || delTok.start > inPoint + clipDur) return null;
+                        const cutLeft = Math.max(0, (delTok.start - inPoint) * pxPerSec);
+                        const cutWidth = Math.max(8, (delTok.end - delTok.start) * pxPerSec);
+
+                        return (
+                          <div
+                            key={`cut_${delTok.id}`}
+                            title={`[Cut Interval] ${delTok.text} (${(delTok.end - delTok.start).toFixed(2)}s cut)`}
+                            style={{
+                              position: 'absolute',
+                              left: `${cutLeft}px`,
+                              width: `${cutWidth}px`,
+                              top: 0,
+                              bottom: 0,
+                              backgroundColor: 'rgba(235, 59, 90, 0.45)',
+                              borderLeft: '1.5px dashed #FF4757',
+                              borderRight: '1.5px dashed #FF4757',
+                              pointerEvents: 'none',
+                              zIndex: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <span style={{ fontSize: '8px', color: '#FFD2D2', fontWeight: 700 }}>✕</span>
+                          </div>
+                        );
+                      })}
                   </div>
 
                   {/* Transition Badge "][" (Page 1) */}

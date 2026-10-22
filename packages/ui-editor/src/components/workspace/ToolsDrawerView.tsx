@@ -92,16 +92,34 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
       {activeTab === 'chroma' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '14px', fontWeight: 500, color: '#FFFFFF', margin: 0 }}>
-              Chroma Key Settings
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h3 style={{ fontSize: '14px', fontWeight: 500, color: '#FFFFFF', margin: 0 }}>
+                Chroma Key Settings
+              </h3>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: settings.chromaKey.enabled ? '#2ED573' : '#A4B0BE', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  id="chk-chroma-enabled"
+                  data-testid="chk-chroma-enabled"
+                  checked={Boolean(settings.chromaKey.enabled)}
+                  onChange={e =>
+                    onUpdateSettings(prev => ({
+                      ...prev,
+                      chromaKey: { ...prev.chromaKey, enabled: e.target.checked },
+                    }))
+                  }
+                  style={{ accentColor: '#2ED573', cursor: 'pointer' }}
+                />
+                <span>{settings.chromaKey.enabled ? 'Active' : 'Off'}</span>
+              </label>
+            </div>
             <ScarletButton
               variant="secondary"
               size="sm"
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  chromaKey: { color: 'green', tolerance: 60, noise: 16, edges: 10, opacity: 85 },
+                  chromaKey: { color: 'green', tolerance: 60, noise: 16, edges: 10, opacity: 85, enabled: false },
                 }))
               }
             >
@@ -532,7 +550,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { mode: 'none', opacity: 100, feathering: 35, outline: false },
+                  highlightConceal: { mode: 'none', opacity: 100, feathering: 35, outline: false, enabled: false },
                 }))
               }
             >
@@ -548,19 +566,19 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { ...prev.highlightConceal, mode: 'none' },
+                  highlightConceal: { ...prev.highlightConceal, mode: 'none', enabled: false },
                 }))
               }
               style={{
                 flex: 1,
                 padding: '6px',
                 borderRadius: '6px',
-                backgroundColor: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none') ? '#168BFF' : '#22262E',
+                backgroundColor: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none' || settings.highlightConceal.enabled === false) ? '#168BFF' : '#22262E',
                 color: '#FFFFFF',
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: '11px',
-                fontWeight: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none') ? 600 : 400,
+                fontWeight: (!settings.highlightConceal.mode || settings.highlightConceal.mode === 'none' || settings.highlightConceal.enabled === false) ? 600 : 400,
               }}
             >
               Off
@@ -572,19 +590,19 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { ...prev.highlightConceal, mode: 'highlight', outline: true },
+                  highlightConceal: { ...prev.highlightConceal, mode: 'highlight', outline: true, enabled: true },
                 }))
               }
               style={{
                 flex: 1,
                 padding: '6px',
                 borderRadius: '6px',
-                backgroundColor: settings.highlightConceal.mode === 'highlight' ? '#168BFF' : '#22262E',
+                backgroundColor: settings.highlightConceal.mode === 'highlight' && settings.highlightConceal.enabled !== false ? '#168BFF' : '#22262E',
                 color: '#FFFFFF',
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: '11px',
-                fontWeight: settings.highlightConceal.mode === 'highlight' ? 600 : 400,
+                fontWeight: settings.highlightConceal.mode === 'highlight' && settings.highlightConceal.enabled !== false ? 600 : 400,
               }}
             >
               Highlight
@@ -596,19 +614,19 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
               onClick={() =>
                 onUpdateSettings(prev => ({
                   ...prev,
-                  highlightConceal: { ...prev.highlightConceal, mode: 'conceal', outline: true },
+                  highlightConceal: { ...prev.highlightConceal, mode: 'conceal', outline: true, enabled: true },
                 }))
               }
               style={{
                 flex: 1,
                 padding: '6px',
                 borderRadius: '6px',
-                backgroundColor: settings.highlightConceal.mode === 'conceal' ? '#168BFF' : '#22262E',
+                backgroundColor: settings.highlightConceal.mode === 'conceal' && settings.highlightConceal.enabled !== false ? '#168BFF' : '#22262E',
                 color: '#FFFFFF',
                 border: 'none',
                 cursor: 'pointer',
                 fontSize: '11px',
-                fontWeight: settings.highlightConceal.mode === 'conceal' ? 600 : 400,
+                fontWeight: settings.highlightConceal.mode === 'conceal' && settings.highlightConceal.enabled !== false ? 600 : 400,
               }}
             >
               Conceal (Blur)
