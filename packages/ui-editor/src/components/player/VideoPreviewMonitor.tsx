@@ -440,12 +440,31 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     };
   }, []);
 
-  // BUG-16 Fix: Active word token for live karaoke subtitle overlay aligned with source time offset
+  // Live karaoke subtitle overlay aligned with source time offset
   const effectiveSourceTime = sourceTimeOffset !== undefined ? sourceTimeOffset : currentTime;
-  const activeToken = tokens.find(t => !t.deleted && effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
-  const currentSentenceTokens = tokens.filter(
-    t => !t.deleted && Math.abs(t.start - effectiveSourceTime) < 3.0
-  );
+  const nonDeletedTokens = useMemo(() => tokens.filter(t => !t.deleted && !t.isPause), [tokens]);
+  const activeToken = nonDeletedTokens.find(t => effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
+
+  // Group tokens into an aesthetic 4-8 word conversational subtitle block around the playhead
+  const currentSentenceTokens = useMemo(() => {
+    if (nonDeletedTokens.length === 0) return [];
+    const activeIdx = nonDeletedTokens.findIndex(t => effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
+    if (activeIdx !== -1) {
+      // Find sentence start (either after punctuation or up to 4 words before)
+      let startIdx = activeIdx;
+      while (startIdx > 0 && activeIdx - startIdx < 4 && !/[.!?]$/.test(nonDeletedTokens[startIdx - 1]?.text ?? '')) {
+        startIdx--;
+      }
+      // Find sentence end (either terminal punctuation or up to 5 words after)
+      let endIdx = activeIdx;
+      while (endIdx < nonDeletedTokens.length - 1 && endIdx - activeIdx < 5 && !/[.!?]$/.test(nonDeletedTokens[endIdx]?.text ?? '')) {
+        endIdx++;
+      }
+      return nonDeletedTokens.slice(startIdx, endIdx + 1);
+    }
+    // Fallback if playhead is in a micro-gap between words: show words within 1.8s
+    return nonDeletedTokens.filter(t => Math.abs(t.start - effectiveSourceTime) < 1.8).slice(0, 7);
+  }, [nonDeletedTokens, effectiveSourceTime]);
 
   const timecode = formatTimecode(currentTime);
 
@@ -1827,24 +1846,32 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
           {/* Dynamic Burned-In Subtitles (Webster Victory Tier) */}
           {isSubtitlesActive !== false && !isTitleTrackHidden && (
             <div
+              id="monitor-burned-in-subtitles"
+              data-testid="monitor-burned-in-subtitles"
               style={{
                 position: 'absolute',
                 bottom: '24px',
                 left: '20px',
                 right: '20px',
                 textAlign: 'center',
-                pointerEvents: 'none',
-                zIndex: 15,
+                pointerEvents: 'auto',
+                zIndex: 25,
               }}
             >
               <div
                 style={{
-                  display: 'inline-block',
-                  backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                  backdropFilter: 'blur(6px)',
-                  borderRadius: '8px',
-                  padding: '6px 14px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  justifyContent: 'center',
+                  gap: '4px',
+                  backgroundColor: 'rgba(10, 12, 16, 0.85)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '10px',
+                  padding: '7px 16px',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.65)',
+                  maxWidth: '90%',
                 }}
               >
                 {currentSentenceTokens.length > 0 ? (
@@ -1853,13 +1880,26 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                     return (
                       <span
                         key={tok.id}
+                        id={`subtitle-word-${tok.id}`}
+                        data-testid={`subtitle-word-${tok.id}`}
+                        onClick={e => {
+                          e.stopPropagation();
+                          onSeek(tok.start);
+                        }}
+                        title={`"${tok.text}" (${tok.start.toFixed(2)}s) - Click to seek`}
                         style={{
-                          margin: '0 3px',
-                          fontSize: '14px',
-                          fontWeight: isActive ? 700 : 500,
-                          color: isActive ? '#168BFF' : '#FFFFFF',
-                          textShadow: isActive ? '0 0 10px rgba(22, 139, 255, 0.8)' : 'none',
-                          transition: 'all 0.1s ease',
+                          display: 'inline-block',
+                          fontSize: '15px',
+                          fontWeight: isActive ? 800 : 500,
+                          color: isActive ? '#000000' : '#FFFFFF',
+                          backgroundColor: isActive ? '#FFD32A' : 'transparent',
+                          borderRadius: '5px',
+                          padding: isActive ? '2px 7px' : '2px 3px',
+                          cursor: 'pointer',
+                          textShadow: isActive ? 'none' : '0 1px 4px rgba(0,0,0,0.85)',
+                          transform: isActive ? 'scale(1.08)' : 'scale(1.0)',
+                          boxShadow: isActive ? '0 0 12px rgba(255, 211, 42, 0.8)' : 'none',
+                          transition: 'all 0.1s cubic-bezier(0.16, 1, 0.3, 1)',
                         }}
                       >
                         {tok.text}
@@ -1867,8 +1907,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                     );
                   })
                 ) : (
-                  <span style={{ fontSize: '13px', color: '#A4B0BE', fontStyle: 'italic' }}>
-                    ScarletCut Live Video Monitor
+                  <span style={{ fontSize: '13px', color: '#8A96A6', fontStyle: 'italic' }}>
+                    ScarletCut Real-time Video Monitor
                   </span>
                 )}
               </div>
