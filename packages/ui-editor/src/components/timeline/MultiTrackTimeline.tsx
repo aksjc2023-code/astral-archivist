@@ -200,6 +200,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     if (activeTrackStates[trackId]?.locked) return;
 
     e.stopPropagation();
+    e.preventDefault();
 
     // Multi-select toggle with Shift+Click or Ctrl/Cmd+Click
     const isMultiSelectModifier = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -221,8 +222,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
     // Single click on a clip:
     // If it's NOT already selected, select it immediately
-    // If it IS already selected as part of a multi-selection, don't clear the others yet!
-    // That way the user can drag the entire group. If they just click without dragging, we isolate it on mouseup.
+    // If it IS already selected as part of a multi-selection, keep the group selected for batch dragging
     let activeSelectedIds: string[];
     let shouldIsolateOnMouseUp = false;
 
@@ -239,10 +239,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
     const startX = e.clientX;
     let hasDragged = false;
+    const origUserSelect = document.body.style.userSelect;
+    const origCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'grabbing';
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaPx = moveEvent.clientX - startX;
-      if (!hasDragged && Math.abs(deltaPx) > 3) {
+      if (!hasDragged && Math.abs(deltaPx) >= 2) {
         hasDragged = true;
       }
       if (hasDragged) {
@@ -259,6 +263,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = origUserSelect;
+      document.body.style.cursor = origCursor;
+
       if (hasDragged) {
         onClipMoveEnd?.(clipId);
       } else if (shouldIsolateOnMouseUp) {
