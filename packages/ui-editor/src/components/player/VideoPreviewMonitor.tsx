@@ -319,15 +319,23 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
 
     try {
-      // Temporarily attenuate audio crackle during discontinuous cut leaps
-      const prevMuted = v.muted;
-      v.muted = true;
+      // Smooth micro-fade (cross-attenuation) to eliminate hardware audio pops during cut leaps
+      const targetVol = v.volume;
+      const step1 = targetVol * 0.15;
+      v.volume = step1;
       v.currentTime = targetSec;
+
+      // Quick smooth 25ms ramp-up on seek completion
       setTimeout(() => {
-        if (v && !isMuted && !trackStates?.['track_video']?.muted) {
-          v.muted = prevMuted;
+        if (v) {
+          v.volume = targetVol * 0.55;
+          setTimeout(() => {
+            if (v) {
+              v.volume = targetVol;
+            }
+          }, 18);
         }
-      }, 40);
+      }, 16);
     } catch {
       activeSeekSeqRef.current = 0;
       activeSeekTargetRef.current = null;

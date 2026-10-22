@@ -47,6 +47,7 @@ export interface MultiTrackTimelineProps {
   onToggleDeleteToken?: (tokenId: string) => void;
   onEditTokenText?: (tokenId: string, newText: string) => void;
   onSeekToSourceTime?: (sourceTime: number) => void;
+  onScaleChange?: (scale: number) => void;
 }
 
 const getClipStart = (c: TimelineClip): number => c.timelineStart ?? c.sourceStart ?? 0;
@@ -84,10 +85,31 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   onToggleDeleteToken,
   onEditTokenText,
   onSeekToSourceTime,
+  onScaleChange,
 }) => {
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+
+  // Ctrl + Mouse Wheel for Zoom In/Out & Trackpad horizontal scrolling
+  const handleTimelineWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      if (onScaleChange) {
+        const delta = e.deltaY < 0 ? 0.15 : -0.15;
+        const nextScale = Math.max(0.4, Math.min(3.5, Number((scale + delta).toFixed(2))));
+        onScaleChange(nextScale);
+      }
+    } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      // Allow natural horizontal scroll
+      if (scrollContainerRef.current && e.shiftKey) {
+        scrollContainerRef.current.scrollLeft += e.deltaY;
+      }
+    }
+  };
+
+  // Magnetic Snap Guide state (cyan vertical guideline during drag alignment)
+  const [activeSnapTime, setActiveSnapTime] = useState<number | null>(null);
 
   // Marquee Drag Selection State
   const [isMarqueeActive, setIsMarqueeActive] = useState(false);
@@ -251,11 +273,35 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       }
       if (hasDragged) {
         const deltaSec = deltaPx / pxPerSec;
+        const candidateStart = Math.max(0, Number((initialStart + deltaSec).toFixed(2)));
+
+        // Compute magnetic snap target across playhead and other clips boundaries
+        let detectedSnap: number | null = null;
+        const clipTarget = clips.find(c => c.id === clipId);
+        const clipDur = clipTarget ? getClipDuration(clipTarget) : 4;
+        const snapTargets = [0, currentTime];
+        clips.filter(c => c.id !== clipId).forEach(c => {
+          const s = getClipStart(c);
+          const d = getClipDuration(c);
+          snapTargets.push(s, s + d);
+        });
+
+        for (const pt of snapTargets) {
+          if (Math.abs(candidateStart - pt) <= 0.12) {
+            detectedSnap = pt;
+            break;
+          }
+          if (Math.abs(candidateStart + clipDur - pt) <= 0.12) {
+            detectedSnap = pt;
+            break;
+          }
+        }
+        setActiveSnapTime(detectedSnap);
+
         if (activeSelectedIds.length > 1 && onBatchMoveClips) {
           onBatchMoveClips(activeSelectedIds, deltaSec);
         } else {
-          const newStart = Math.max(0, Number((initialStart + deltaSec).toFixed(2)));
-          onMoveClip?.(clipId, newStart);
+          onMoveClip?.(clipId, candidateStart);
         }
       }
     };
@@ -265,6 +311,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       window.removeEventListener('mouseup', handleMouseUp);
       document.body.style.userSelect = origUserSelect;
       document.body.style.cursor = origCursor;
+      setActiveSnapTime(null);
 
       if (hasDragged) {
         onClipMoveEnd?.(clipId);
@@ -1028,6 +1075,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       <div
         ref={scrollContainerRef}
         onMouseDown={handleTracksMouseDown}
+        onWheel={handleTimelineWheel}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1040,6 +1088,40 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         }}
       >
         <div style={{ width: `${totalTimelineWidthPx}px`, height: '100%', position: 'relative' }}>
+          {/* Real-time Magnetic Snap Guideline (Cyan Vertical Line) */}
+          {activeSnapTime !== null && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${activeSnapTime * pxPerSec}px`,
+                top: 0,
+                bottom: 0,
+                width: '1px',
+                backgroundColor: '#00F0FF',
+                zIndex: 45,
+                pointerEvents: 'none',
+                boxShadow: '0 0 10px #00F0FF, 0 0 4px #FFFFFF',
+              }}
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '2px',
+                  left: '4px',
+                  backgroundColor: '#00F0FF',
+                  color: '#0A0C10',
+                  padding: '1px 5px',
+                  borderRadius: '3px',
+                  fontSize: '9px',
+                  fontWeight: 800,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                🧲 SNAP {activeSnapTime.toFixed(2)}s
+              </div>
+            </div>
+          )}
+
           {/* Active Magnetic Drop Indicator */}
           {dropIndicator && (
             <div

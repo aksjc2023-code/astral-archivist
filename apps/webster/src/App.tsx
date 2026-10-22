@@ -36,6 +36,7 @@ import {
   synthesizeOverdubWavBytes,
   TitleClipData,
   FilterClipData,
+  getSummarizedKeyTokenIds,
 } from '@astral/core';
 
 import {
@@ -565,6 +566,26 @@ export const App: React.FC = () => {
     setTokensByMedia(prev => {
       const currentList = prev[activeTranscriptMediaId] ?? [];
       return { ...prev, [activeTranscriptMediaId]: restoreAllTokens(currentList) };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
+
+  // AI Extractive Summarizer: Keep only top ranked key highlight sentences and cut the rest
+  const handleSummarizeKeyPoints = useCallback(() => {
+    pushHistory(tokensByMedia, clips);
+    setTokensByMedia(prev => {
+      const currentList = prev[activeTranscriptMediaId] ?? [];
+      if (currentList.length <= 8) return prev;
+      const keyIds = getSummarizedKeyTokenIds(currentList, 0.5);
+      const updated = currentList.map(t => {
+        if (t.isPause || t.isFiller) {
+          return { ...t, deleted: true };
+        }
+        return {
+          ...t,
+          deleted: !keyIds.has(t.id),
+        };
+      });
+      return { ...prev, [activeTranscriptMediaId]: updated };
     });
   }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
@@ -2053,7 +2074,17 @@ export const App: React.FC = () => {
   // Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (
+          ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) ||
+          target.isContentEditable ||
+          target.closest('[contenteditable="true"]') ||
+          target.closest('input') ||
+          target.closest('textarea')
+        )
+      ) {
         return;
       }
 
@@ -2160,6 +2191,7 @@ export const App: React.FC = () => {
               webGpuDeviceName={webGpuDeviceName}
               transcriptionError={transcriptionError}
               onClearTranscriptionError={() => setTranscriptionError(null)}
+              onSummarizeKeyPoints={handleSummarizeKeyPoints}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */
@@ -2442,6 +2474,7 @@ export const App: React.FC = () => {
           onToggleDeleteToken={handleToggleDeleteToken}
           onEditTokenText={handleEditTokenText}
           onSeekToSourceTime={handleTranscriptSeek}
+          onScaleChange={setTimelineScale}
         />
 
         {/* Bottom Status Footer (28px Height) */}

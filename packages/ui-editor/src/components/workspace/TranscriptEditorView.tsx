@@ -23,6 +23,7 @@ export interface TranscriptEditorViewProps {
   webGpuDeviceName?: string | null;
   transcriptionError?: string | null;
   onClearTranscriptionError?: () => void;
+  onSummarizeKeyPoints?: () => void;
 }
 
 export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
@@ -45,6 +46,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   webGpuDeviceName,
   transcriptionError,
   onClearTranscriptionError,
+  onSummarizeKeyPoints,
 }) => {
   const [showMediaDropdown, setShowMediaDropdown] = useState(false);
   const activeAsset = mediaAssets?.find(a => a.id === activeMediaId);
@@ -479,6 +481,20 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           >
             Purge Fillers &amp; Pauses ({fillerCount})
           </ScarletButton>
+
+          {onSummarizeKeyPoints && tokens.length > 8 && (
+            <ScarletButton
+              id="btn-auto-summarize"
+              variant="additional-v2"
+              size="sm"
+              icon={<IconSparkles size={14} color="#00F0FF" />}
+              onClick={onSummarizeKeyPoints}
+              style={{ color: '#00F0FF', borderColor: '#00F0FF' }}
+              title="Automatically cut transcript down to key highlights using local TF-IDF ranking"
+            >
+              ✂️ Auto-Summarize Highlights
+            </ScarletButton>
+          )}
         </div>
       </div>
 
