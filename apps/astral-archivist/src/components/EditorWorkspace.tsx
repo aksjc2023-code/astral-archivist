@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { VaultItem } from '../services/tauriClient';
+import { VaultItem, exportProject } from '../services/tauriClient';
 
 interface EditorWorkspaceProps {
   selectedItem: VaultItem | null;
@@ -68,14 +68,33 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
     setClips(updated);
   };
 
-  // Native export simulation & trigger (B4)
-  const handleTriggerExport = () => {
+  // Native export using native FFmpeg pipeline (B4)
+  const handleTriggerExport = async () => {
+    if (!selectedItem || clips.length === 0) return;
     setExporting(true);
     setExportOutput(null);
-    setTimeout(() => {
+
+    try {
+      const exportReq = {
+        clips: clips.map((c) => ({
+          source_path: selectedItem.file_path,
+          inpoint_sec: c.sourceStart,
+          outpoint_sec: c.sourceEnd,
+          is_muted: c.isMuted,
+        })),
+        output_filename: `astral_render_${Date.now()}.mp4`,
+      };
+
+      const result = await exportProject(exportReq);
+      setExportOutput(
+        `✓ ${result.message}: ${result.output_path} (${result.duration_seconds.toFixed(1)}s, ${result.file_size_bytes} bytes)`
+      );
+    } catch (err) {
+      console.error('[EditorWorkspace] Export failed:', err);
+      setExportOutput('Export failed. Check logs for details.');
+    } finally {
       setExporting(false);
-      setExportOutput(`Export complete: output_${Date.now()}.mp4 (Duration: ${clips.reduce((acc, c) => acc + (c.sourceEnd - c.sourceStart), 0).toFixed(1)}s, ${clips.length} clips conjoined)`);
-    }, 1500);
+    }
   };
 
   if (!selectedItem) {

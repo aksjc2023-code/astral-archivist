@@ -1,3 +1,4 @@
+use crate::ffmpeg::{self, ExportRequest, ExportResult};
 use crate::vault::VaultItem;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -69,4 +70,10 @@ pub fn rename_vault_item(app: AppHandle, id: String, new_title: String) -> Resul
 #[tauri::command]
 pub fn delete_vault_item(app: AppHandle, id: String) -> Result<bool, String> {
     crate::vault::delete_item(&app, id)
+}
+
+#[tauri::command]
+pub fn export_project(app: AppHandle, req: ExportRequest) -> Result<ExportResult, String> {
+    let vault_dir = crate::vault::get_vault_dir(&app)?;
+    ffmpeg::render_export(&vault_dir, req)
 }

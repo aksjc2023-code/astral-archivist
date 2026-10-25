@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod ffmpeg;
 pub mod vault;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,7 +20,8 @@ pub fn run() {
             commands::list_vault_items,
             commands::save_capture_session,
             commands::rename_vault_item,
-            commands::delete_vault_item
+            commands::delete_vault_item,
+            commands::export_project
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");
