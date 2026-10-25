@@ -5,12 +5,16 @@
   "description": "ScarletCut — Browser-Native Non-Linear Video Editor for Webster 2026",
   "scripts": {
     "dev": "pnpm --filter webster dev",
+    "dev:desktop": "pnpm --filter @astral/archivist-app dev",
+    "tauri": "pnpm --filter @astral/archivist-app tauri",
     "build": "pnpm --filter \"@astral/*\" build && pnpm --filter webster build",
+    "build:desktop": "pnpm --filter @astral/archivist-app build",
     "test": "tsx --test packages/BACKEND-CORE/test/timelineEngine.test.ts packages/BACKEND-CORE/test/fillerAndWhisper.test.ts packages/BACKEND-CORE/test/filterGraphBuilder.test.ts packages/BACKEND-CORE/test/disfluencyCutter.test.ts",
     "typecheck": "pnpm --recursive typecheck",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4",
     "tsx": "^4.23.15",
     "typescript": "^5.7.3"
   }
