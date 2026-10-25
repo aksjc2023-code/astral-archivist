@@ -19,13 +19,20 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Rust / Tauri build artifacts
+src-tauri/target/
+**/src-tauri/target/
+
 # Temporary and build artifacts
 .turbo/
 .cache/
 coverage/
 .gravitas/
 .opencode/
+.fallow/
+.agent/
 .agents/
+.gemini/
 AGENTS.md
 
 # Specific request: do not commit the master prompt/plan files
@@ -33,3 +40,4 @@ Master Engineering Plan.md
 scarletcut_antigravity_master_ui_execution_plan.md
 scratch_dossier_text.txt
 *.pdf
+
