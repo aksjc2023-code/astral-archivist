@@ -61,7 +61,6 @@ export interface VideoPreviewMonitorProps {
   onClearActiveSticker?: () => void;
   onClearActiveTransition?: () => void;
   onClearActiveTitle?: () => void;
-  onLoadDemoProject?: () => void;
   onImportMedia?: () => void;
   onBrowseFilesSelected?: (files: File[]) => void;
 }
@@ -111,7 +110,6 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onClearActiveSticker,
   onClearActiveTransition,
   onClearActiveTitle,
-  onLoadDemoProject,
   onImportMedia,
   onBrowseFilesSelected,
 }) => {
@@ -756,7 +754,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 No Media on Timeline
               </div>
               <div style={{ fontSize: '11px', color: '#747D8C', maxWidth: '320px', lineHeight: 1.5, marginBottom: '20px' }}>
-                Drag & drop filters, transitions, titles or stickers into the timeline below, import files, or load the sample demo.
+                Drag & drop filters, transitions, titles or stickers into the timeline below, or import media files.
               </div>
               <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                 <input
@@ -791,29 +789,6 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 >
                   <span>📁 Browse Files</span>
                 </button>
-                {onLoadDemoProject && (
-                  <button
-                    type="button"
-                    id="btn-load-demo-project"
-                    data-testid="btn-load-demo-project"
-                    onClick={onLoadDemoProject}
-                    style={{
-                      backgroundColor: '#22262E',
-                      color: '#00F0FF',
-                      border: '1px solid rgba(0, 240, 255, 0.45)',
-                      borderRadius: '8px',
-                      padding: '8px 16px',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '6px',
-                    }}
-                  >
-                    <span>⚡ Load Demo Project</span>
-                  </button>
-                )}
               </div>
             </div>
           ) : (

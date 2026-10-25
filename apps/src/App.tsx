@@ -11,13 +11,7 @@ import {
   ActivityDockTab,
   SubNavSection,
   FailureMode,
-  INITIAL_MEDIA_ASSETS,
-  LIBRARY_MEDIA_ASSETS,
-  INITIAL_WORD_TOKENS,
-  INITIAL_TOKENS_BY_MEDIA,
   generateDefaultTokensForAsset,
-  INITIAL_TIMELINE_CLIPS,
-  INITIAL_MARKERS,
   INITIAL_TOOL_SETTINGS,
   buildPlaybackSegments,
   calculateSkipRanges,
@@ -1033,19 +1027,6 @@ export const App: React.FC = () => {
     setSelectedClipId(newClip.id);
   }, [clips]);
 
-  // 1-Click Load Sample Demo Project (for testing and showcase)
-  const handleLoadDemoProject = useCallback(() => {
-    pushHistory(tokensByMedia, clips);
-    setMediaAssets([...INITIAL_MEDIA_ASSETS, ...LIBRARY_MEDIA_ASSETS]);
-    setTokensByMedia(INITIAL_TOKENS_BY_MEDIA);
-    setActiveTranscriptMediaId('asset_1');
-    setClips(INITIAL_TIMELINE_CLIPS);
-    setMarkers(INITIAL_MARKERS);
-    setSelectedClipId('clip_video_1');
-    setSelectedClipIds(['clip_video_1']);
-    setCurrentTime(0);
-  }, [pushHistory, tokensByMedia, clips]);
-
   // Batch shift / move multiple selected clips synchronously (BUG-01 Fix: Linear displacement from baseline snapshot)
   const handleBatchMoveClips = useCallback((clipIds: string[], deltaSec: number) => {
     if (!dragStartClipsRef.current) {
@@ -1646,24 +1627,22 @@ export const App: React.FC = () => {
     let asset = mediaAssets.find(a => a.id === activeMediaId);
 
     if (!blob) {
+      if (!activeVideoUrl) {
+        setIsTranscribing(false);
+        alert('No media file loaded to transcribe.');
+        return;
+      }
       setTranscribeStatus('Fetching media file stream...');
       setIsTranscribing(true);
       setTranscribePercent(2);
-      const urlToFetch = activeVideoUrl || '/sample_festival.mp4';
       try {
-        const resp = await fetch(urlToFetch);
+        const resp = await fetch(activeVideoUrl);
         if (resp.ok) {
           blob = await resp.blob();
           fileBlobMapRef.current.set(activeMediaId, new File([blob], asset?.name ?? 'video.mp4', { type: 'video/mp4' }));
         }
-      } catch {
-        try {
-          const resp = await fetch('/sample_festival.mp4');
-          if (resp.ok) {
-            blob = await resp.blob();
-            fileBlobMapRef.current.set(activeMediaId, new File([blob], 'sample_festival.mp4', { type: 'video/mp4' }));
-          }
-        } catch {}
+      } catch (err) {
+        console.warn('Failed to fetch media blob from URL', err);
       }
     }
 
@@ -1701,17 +1680,9 @@ export const App: React.FC = () => {
     for (let i = 0; i < activeVideoClips.length; i++) {
       const c = activeVideoClips[i]!;
       let cBlob = c.mediaId ? fileBlobMapRef.current.get(c.mediaId) : undefined;
-      if (!cBlob) {
-        const fetchUrl = c.videoUrl || (i % 2 === 0 ? '/sample_festival.mp4' : '/sample_team.mp4');
+      if (!cBlob && c.videoUrl) {
         try {
-          const resp = await fetch(fetchUrl);
-          if (resp.ok) cBlob = await resp.blob();
-        } catch {}
-      }
-      if (!cBlob) {
-        const fallbackUrl = i % 2 === 0 ? '/sample_festival.mp4' : '/sample_team.mp4';
-        try {
-          const resp = await fetch(fallbackUrl);
+          const resp = await fetch(c.videoUrl);
           if (resp.ok) cBlob = await resp.blob();
         } catch {}
       }
@@ -1766,23 +1737,7 @@ export const App: React.FC = () => {
     }
 
     if (clipInputs.length === 0) {
-      let fallbackBlob: Blob | undefined;
-      try {
-        const resp = await fetch('/sample_festival.mp4');
-        if (resp.ok) fallbackBlob = await resp.blob();
-      } catch {}
-      if (fallbackBlob) {
-        clipInputs.push({
-          blob: fallbackBlob,
-          sourceIn: 0,
-          sourceOut: 15,
-          duration: 15,
-        });
-      }
-    }
-
-    if (clipInputs.length === 0) {
-      alert('Unable to load video media buffer for export.');
+      alert('Unable to load video media buffer for export. Please ensure at least one video clip is on the timeline.');
       return;
     }
 
@@ -1827,17 +1782,13 @@ export const App: React.FC = () => {
         const aClip = activeAudioClips[j]!;
         let aBlob = aClip.mediaId ? fileBlobMapRef.current.get(aClip.mediaId) : undefined;
         if (!aBlob) {
-          const fetchUrl = aClip.videoUrl || aClip.locator || '/sample_audio.wav';
-          try {
-            const resp = await fetch(fetchUrl);
-            if (resp.ok) aBlob = await resp.blob();
-          } catch {}
-        }
-        if (!aBlob) {
-          try {
-            const resp = await fetch('/sample_audio.wav');
-            if (resp.ok) aBlob = await resp.blob();
-          } catch {}
+          const fetchUrl = aClip.videoUrl || aClip.locator;
+          if (fetchUrl) {
+            try {
+              const resp = await fetch(fetchUrl);
+              if (resp.ok) aBlob = await resp.blob();
+            } catch {}
+          }
         }
         if (aBlob) {
           const aStart = Number((aClip.timelineStart ?? aClip.sourceStart ?? 0).toFixed(2));
@@ -2475,7 +2426,6 @@ export const App: React.FC = () => {
             backgroundAudioUrl={backgroundAudioClip?.videoUrl}
             masterVolume={masterVolume}
             onShowCropGuidesChange={setShowCropGuides}
-            onLoadDemoProject={handleLoadDemoProject}
             onImportMedia={() => {
               setActiveDockTab('media');
               setActiveSubNav('my-files');
