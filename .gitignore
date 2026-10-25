@@ -25,6 +25,8 @@ pnpm-debug.log*
 coverage/
 .gravitas/
 .opencode/
+.agents/
+AGENTS.md
 
 # Specific request: do not commit the master prompt/plan files
 Master Engineering Plan.md
