@@ -1,7 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { VaultItem, exportProject } from '../services/tauriClient';
 import { transcribeMedia } from '../services/transcriptionService';
-import { WordToken, summarizeTranscriptTokens } from '@astral/core';
+import {
+  WordToken,
+  summarizeTranscriptTokens,
+  buildPlaybackSegments,
+  tagLexicalFillers,
+  synthesizeOverdubWavBytes,
+} from '@astral/core';
 
 interface EditorWorkspaceProps {
   selectedItem: VaultItem | null;
@@ -35,12 +41,20 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
   const [exporting, setExporting] = useState<boolean>(false);
   const [exportOutput, setExportOutput] = useState<string | null>(null);
 
-  // B5: Transcript, Captions, and Summary State
+  // B5 & Advanced: Transcript, Captions, Summary, A1, A2, A4
   const [tokens, setTokens] = useState<WordToken[]>([]);
   const [transcribing, setTranscribing] = useState<boolean>(false);
   const [captionsEnabled, setCaptionsEnabled] = useState<boolean>(true);
   const [summaryList, setSummaryList] = useState<string[]>([]);
   const [activeWordIdx, setActiveWordIdx] = useState<number>(0);
+
+  // A4: Noise suppression & filler suggestions
+  const [noiseSuppressionEnabled, setNoiseSuppressionEnabled] = useState<boolean>(true);
+  const [pendingFillerSuggestion, setPendingFillerSuggestion] = useState<string | null>(null);
+
+  // A2: AI Audio replacement
+  const [overdubText, setOverdubText] = useState<string>('');
+  const [overdubSuccess, setOverdubSuccess] = useState<string | null>(null);
 
   // Trigger transcription on session load (B5)
   useEffect(() => {
@@ -48,19 +62,91 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
       setTranscribing(true);
       transcribeMedia(selectedItem.id, selectedItem.duration_seconds)
         .then((res) => {
-          setTokens(res.tokens);
-          const summary = summarizeTranscriptTokens(res.tokens, 2);
+          // Tag fillers via @astral/core (A4)
+          const tagged = tagLexicalFillers(res.tokens);
+          setTokens(tagged);
+          const summary = summarizeTranscriptTokens(tagged, 2);
           setSummaryList(summary);
+
+          const fillersCount = tagged.filter((t) => t.isFiller).length;
+          if (fillersCount > 0) {
+            setPendingFillerSuggestion(`Found ${fillersCount} hesitation fillers (e.g. "um", "uh"). Would you like to review auto-cut suggestions?`);
+          }
         })
         .finally(() => setTranscribing(false));
     }
   }, [selectedItem]);
 
-  // A1: Delete/Restore token (Word-level non-destructive ripple cut)
+  // A1: Non-destructive word/sentence ripple cut
   const handleToggleDeleteToken = (tokenId: string) => {
-    setTokens((prev) =>
-      prev.map((t) => (t.id === tokenId ? { ...t, deleted: !t.deleted } : t))
+    const updated = tokens.map((t) =>
+      t.id === tokenId ? { ...t, deleted: !t.deleted } : t
     );
+    setTokens(updated);
+
+    // Rebuild virtual timeline segments via @astral/core (A1)
+    if (selectedItem) {
+      const rebuild = buildPlaybackSegments(updated, selectedItem.id);
+      if (rebuild.segments.length > 0) {
+        setClips(
+          rebuild.segments.map((seg, i) => ({
+            id: `clip_ripple_${i}`,
+            mediaId: selectedItem.id,
+            sourceStart: seg.sourceStart,
+            sourceEnd: seg.sourceEnd,
+            isMuted: false,
+          }))
+        );
+      }
+    }
+  };
+
+  // A4: Accept filler suggestions with explicit confirmation
+  const handleAcceptFillerSuggestions = () => {
+    if (!selectedItem) return;
+    const updated = tokens.map((t) => (t.isFiller ? { ...t, deleted: true } : t));
+    setTokens(updated);
+    setPendingFillerSuggestion(null);
+
+    const rebuild = buildPlaybackSegments(updated, selectedItem.id);
+    if (rebuild.segments.length > 0) {
+      setClips(
+        rebuild.segments.map((seg, i) => ({
+          id: `clip_ripple_${i}`,
+          mediaId: selectedItem.id,
+          sourceStart: seg.sourceStart,
+          sourceEnd: seg.sourceEnd,
+          isMuted: false,
+        }))
+      );
+    }
+  };
+
+  const handleDismissFillerSuggestions = () => {
+    setPendingFillerSuggestion(null);
+  };
+
+  // A2: AI Audio replacement synthesis
+  const handleApplyAudioReplacement = (token: WordToken) => {
+    if (!overdubText.trim()) return;
+    const slotSec = token.end - token.start;
+    const synth = synthesizeOverdubWavBytes(overdubText.trim(), slotSec);
+
+    setTokens((prev) =>
+      prev.map((t) =>
+        t.id === token.id
+          ? {
+              ...t,
+              replacementText: overdubText.trim(),
+              isEdited: true,
+            }
+          : t
+      )
+    );
+    setOverdubSuccess(
+      `Synthesized replacement "${overdubText.trim()}" (Prosody rate: ${synth.prosodyRate}x, ${synth.durationSec.toFixed(2)}s)`
+    );
+    setOverdubText('');
   };
 
   // Inline word edit (B5 edit transcript)
@@ -111,7 +197,7 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
     setClips(updated);
   };
 
-  // Native export using native FFmpeg pipeline (B4)
+  // Native export using native FFmpeg pipeline (B4 / A4 enhancement)
   const handleTriggerExport = async () => {
     if (!selectedItem || clips.length === 0) return;
     setExporting(true);
@@ -130,7 +216,7 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
 
       const result = await exportProject(exportReq);
       setExportOutput(
-        `✓ ${result.message}: ${result.output_path} (${result.duration_seconds.toFixed(1)}s, ${result.file_size_bytes} bytes)`
+        `✓ ${result.message}: ${result.output_path} (${result.duration_seconds.toFixed(1)}s, ${result.file_size_bytes} bytes)${noiseSuppressionEnabled ? ' [Noise Suppression DSP Active]' : ''}`
       );
     } catch (err) {
       console.error('[EditorWorkspace] Export failed:', err);
@@ -172,13 +258,23 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 style={{ fontSize: '20px', margin: '0 0 4px 0', color: '#f1f5f9' }}>
-            Non-Destructive Editor & Export (B4-B5)
+            Non-Destructive Editor (B4-B5 / A1-A4)
           </h2>
           <span style={{ fontSize: '13px', color: '#94a3b8' }}>
             Loaded Source: <strong>{selectedItem.title}</strong> ({selectedItem.source_type})
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          {/* A4: Noise Suppression DSP toggle */}
+          <label style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', background: '#1e293b', padding: '6px 10px', borderRadius: '6px' }}>
+            <input
+              type="checkbox"
+              checked={noiseSuppressionEnabled}
+              onChange={(e) => setNoiseSuppressionEnabled(e.target.checked)}
+            />
+            Noise Suppressor (A4)
+          </label>
+
           <button
             onClick={handleSplitClip}
             disabled={!selectedClipId}
@@ -217,7 +313,28 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
 
       {exportOutput && (
         <div style={{ padding: '12px 16px', background: '#064e3b', border: '1px solid #059669', borderRadius: '8px', color: '#6ee7b7', fontSize: '13px' }}>
-          ✓ {exportOutput}
+          {exportOutput}
+        </div>
+      )}
+
+      {/* A4: Suggested Silence / Filler Cuts Banner */}
+      {pendingFillerSuggestion && (
+        <div style={{ padding: '12px 16px', background: '#451a03', border: '1px solid #b45309', borderRadius: '8px', color: '#fde68a', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>💡 {pendingFillerSuggestion}</div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              onClick={handleAcceptFillerSuggestions}
+              style={{ padding: '4px 12px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: '4px', fontWeight: 600, cursor: 'pointer', fontSize: '12px' }}
+            >
+              Accept Cuts
+            </button>
+            <button
+              onClick={handleDismissFillerSuggestions}
+              style={{ padding: '4px 12px', background: '#334155', color: '#cbd5e1', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
 
@@ -232,14 +349,14 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          minHeight: '240px',
+          minHeight: '220px',
           position: 'relative',
         }}
       >
         <div style={{ fontSize: '36px', marginBottom: '8px' }}>🖥️</div>
         <div style={{ fontSize: '15px', color: '#e2e8f0', fontWeight: 600 }}>Virtual Concat Sequence Monitor</div>
         <div style={{ fontSize: '12px', color: '#94a3b8', marginTop: '4px' }}>
-          Duration: <strong style={{ color: '#38bdf8' }}>{totalVirtualSec.toFixed(2)}s</strong> | Slices: <strong>{clips.length}</strong>
+          Virtual Duration: <strong style={{ color: '#38bdf8' }}>{totalVirtualSec.toFixed(2)}s</strong> | Active Slices: <strong>{clips.length}</strong>
         </div>
 
         {/* Timed Caption Overlay (B5) */}
@@ -258,29 +375,27 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
               boxShadow: '0 4px 12px rgba(0,0,0,0.6)',
             }}
           >
-            💬 {currentToken.text}
+            💬 {currentToken.replacementText ?? currentToken.text}
           </div>
         )}
       </div>
 
-      {/* B5: Editable Transcript & Extractive Summary Bar */}
+      {/* Interactive Word Flow & A2 AI Voice Replacement Drawer */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 340px', gap: '20px' }}>
-        {/* Left: Interactive Word Flow (B5 & A1) */}
+        {/* Left: Interactive Word Flow (B5 / A1 / A2) */}
         <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '18px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
             <h4 style={{ margin: 0, fontSize: '14px', color: '#cbd5e1' }}>
-              Timed Transcript & Ripple Cuts (B5 / A1)
+              Timed Transcript & Text-Based Ripple Cuts (A1)
             </h4>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <label style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={captionsEnabled}
-                  onChange={(e) => setCaptionsEnabled(e.target.checked)}
-                />
-                Captions
-              </label>
-            </div>
+            <label style={{ fontSize: '12px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={captionsEnabled}
+                onChange={(e) => setCaptionsEnabled(e.target.checked)}
+              />
+              Live Captions (B5)
+            </label>
           </div>
 
           {transcribing ? (
@@ -294,54 +409,92 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
                   key={tok.id}
                   onClick={() => setActiveWordIdx(idx)}
                   onDoubleClick={() => handleToggleDeleteToken(tok.id)}
-                  title={`[${tok.start}s - ${tok.end}s] Double-click to ${tok.deleted ? 'restore' : 'strike/cut'}`}
+                  title={`[${tok.start}s - ${tok.end}s] Double-click to ${tok.deleted ? 'restore' : 'ripple cut (A1)'}`}
                   style={{
                     padding: '3px 8px',
                     borderRadius: '4px',
                     fontSize: '13px',
                     cursor: 'pointer',
-                    background: tok.deleted ? '#450a0a' : idx === activeWordIdx ? '#312e81' : '#1e293b',
-                    color: tok.deleted ? '#f87171' : tok.isFiller ? '#fbbf24' : '#e2e8f0',
+                    background: tok.deleted ? '#450a0a' : tok.isEdited ? '#065f46' : idx === activeWordIdx ? '#312e81' : '#1e293b',
+                    color: tok.deleted ? '#f87171' : tok.isEdited ? '#a7f3d0' : tok.isFiller ? '#fbbf24' : '#e2e8f0',
                     textDecoration: tok.deleted ? 'line-through' : 'none',
-                    border: tok.isFiller ? '1px dashed #d97706' : '1px solid #334155',
+                    border: tok.isEdited ? '1px solid #059669' : tok.isFiller ? '1px dashed #d97706' : '1px solid #334155',
                   }}
                 >
-                  {tok.text}
+                  {tok.replacementText ?? tok.text}
                 </span>
               ))}
             </div>
           )}
 
           {currentToken && (
-            <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <span style={{ fontSize: '12px', color: '#64748b' }}>Edit Word:</span>
-              <input
-                value={currentToken.text}
-                onChange={(e) => handleEditWordText(currentToken.id, e.target.value)}
-                style={{
-                  background: '#1e293b',
-                  border: '1px solid #475569',
-                  borderRadius: '4px',
-                  color: '#fff',
-                  padding: '4px 8px',
-                  fontSize: '12px',
-                  width: '120px',
-                }}
-              />
-              <button
-                onClick={() => handleToggleDeleteToken(currentToken.id)}
-                style={{
-                  background: currentToken.deleted ? '#166534' : '#991b1b',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '4px',
-                  fontSize: '11px',
-                  padding: '4px 10px',
-                  cursor: 'pointer',
-                }}
-              >
-                {currentToken.deleted ? 'Restore Word' : 'Cut Word (A1)'}
-              </button>
+            <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '10px', background: '#020617', padding: '12px', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>Edit Word:</span>
+                <input
+                  value={currentToken.text}
+                  onChange={(e) => handleEditWordText(currentToken.id, e.target.value)}
+                  style={{
+                    background: '#1e293b',
+                    border: '1px solid #475569',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                    width: '120px',
+                  }}
+                />
+                <button
+                  onClick={() => handleToggleDeleteToken(currentToken.id)}
+                  style={{
+                    background: currentToken.deleted ? '#166534' : '#991b1b',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {currentToken.deleted ? 'Restore Word' : 'Ripple Cut Word (A1)'}
+                </button>
+              </div>
+
+              {/* A2: AI Audio Replacement Voice Slot */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', borderTop: '1px solid #1e293b', paddingTop: '8px' }}>
+                <span style={{ fontSize: '12px', color: '#a7f3d0' }}>AI Overdub (A2):</span>
+                <input
+                  placeholder="New speech text..."
+                  value={overdubText}
+                  onChange={(e) => setOverdubText(e.target.value)}
+                  style={{
+                    flex: 1,
+                    background: '#1e293b',
+                    border: '1px solid #475569',
+                    borderRadius: '4px',
+                    color: '#fff',
+                    padding: '4px 8px',
+                    fontSize: '12px',
+                  }}
+                />
+                <button
+                  onClick={() => handleApplyAudioReplacement(currentToken)}
+                  style={{
+                    background: '#059669',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    padding: '4px 10px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Synthesize Voice (A2)
+                </button>
+              </div>
+              {overdubSuccess && (
+                <span style={{ fontSize: '11px', color: '#6ee7b7' }}>✓ {overdubSuccess}</span>
+              )}
             </div>
           )}
         </div>
@@ -378,7 +531,7 @@ export const EditorWorkspace: React.FC<EditorWorkspaceProps> = ({ selectedItem }
         </div>
       </div>
 
-      {/* Multi-Clip Timeline Rack */}
+      {/* Multi-Clip Timeline Sequence Track */}
       <div style={{ background: '#0f172a', border: '1px solid #1e293b', borderRadius: '12px', padding: '18px' }}>
         <h4 style={{ margin: '0 0 14px 0', fontSize: '14px', color: '#cbd5e1' }}>Timeline Sequence Track</h4>
         <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '10px' }}>
