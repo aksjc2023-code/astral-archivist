@@ -191,9 +191,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <span style={{ fontSize: '14px', fontWeight: 600, color: '#FFFFFF' }}>
               Export Project
             </span>
-            <span style={{ fontSize: '11px', color: '#636E7B' }}>
-              (Movavi Page 7 Multi-Format Hub)
-            </span>
           </div>
 
           <button
@@ -274,7 +271,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               gap: '12px',
             }}
           >
-            {/* User Profile Callout (Page 7) */}
+            {/* Category Header */}
             <div
               style={{
                 display: 'flex',
@@ -290,25 +287,6 @@ export const ExportModal: React.FC<ExportModalProps> = ({
                 </div>
                 <div style={{ fontSize: '11px', color: '#636E7B' }}>
                   {tabHeadlines[activeTab].sub}
-                </div>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '11px', color: '#A4B0BE' }}>Viktoria Stepanova</span>
-                <div
-                  style={{
-                    width: '28px',
-                    height: '28px',
-                    borderRadius: '50%',
-                    backgroundColor: '#168BFF',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#FFFFFF',
-                    fontWeight: 600,
-                    fontSize: '11px',
-                  }}
-                >
-                  VS
                 </div>
               </div>
             </div>

@@ -31,6 +31,7 @@ export interface VideoPreviewMonitorProps {
   onForward10?: () => void;
   videoPreviewUrl?: string;
   sourceTimeOffset?: number;
+  isAcrossCutBoundary?: boolean;
   isSeekLocked?: boolean;
   onSeekLockChange?: (isLocked: boolean) => void;
   playbackSpeed?: number;
@@ -82,6 +83,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   onForward10,
   videoPreviewUrl,
   sourceTimeOffset,
+  isAcrossCutBoundary = false,
   isSeekLocked = false,
   onSeekLockChange,
   playbackSpeed = 1.0,
@@ -203,7 +205,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
   }, [activeTransition]);
 
-  const [volume, setVolume] = useState(0.85);
+  const [volume, setVolume] = useState(1.0);
+  const intendedVolumeRef = useRef(1.0);
   const [isMuted, setIsMuted] = useState(false);
   const [showCropGuidesLocal, setShowCropGuidesLocal] = useState(false);
   const showCropGuides = showCropGuidesProp ?? showCropGuidesLocal;
@@ -319,23 +322,9 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
 
     try {
-      // Smooth micro-fade (cross-attenuation) to eliminate hardware audio pops during cut leaps
-      const targetVol = v.volume;
-      const step1 = targetVol * 0.15;
-      v.volume = step1;
       v.currentTime = targetSec;
-
-      // Quick smooth 25ms ramp-up on seek completion
-      setTimeout(() => {
-        if (v) {
-          v.volume = targetVol * 0.55;
-          setTimeout(() => {
-            if (v) {
-              v.volume = targetVol;
-            }
-          }, 18);
-        }
-      }, 16);
+      v.volume = intendedVolumeRef.current;
+      v.muted = isMuted || !!trackStates?.['track_video']?.muted;
     } catch {
       activeSeekSeqRef.current = 0;
       activeSeekTargetRef.current = null;
@@ -402,6 +391,10 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     if (seekTimeoutRef.current) {
       window.clearTimeout(seekTimeoutRef.current);
       seekTimeoutRef.current = null;
+    }
+    if (v) {
+      v.volume = intendedVolumeRef.current;
+      v.muted = isMuted || !!trackStates?.['track_video']?.muted;
     }
     activeSeekSeqRef.current = 0;
     activeSeekTargetRef.current = null;
@@ -516,6 +509,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
       const effectiveVol = (isMuted || isTrackMuted)
         ? 0
         : Math.max(0, Math.min(1.0, volume * trackVol * masterGain * eqGain));
+      intendedVolumeRef.current = effectiveVol;
       v.volume = effectiveVol;
       v.muted = isMuted || !!isTrackMuted;
     }
@@ -553,6 +547,9 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
   }, [currentTime]);
 
+  // Safe drift tolerance deadband (120ms) - only seek when jumping across cuts, paused/scrubbing, or exceeding deadband
+  const SYNC_THRESHOLD_SECONDS = 0.12;
+
   // Sync mapped source time to HTML5 video element with seek serialization and boundary clamping
   useEffect(() => {
     const v = videoRef.current;
@@ -560,14 +557,23 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     const vidDuration = v.duration && !isNaN(v.duration) && v.duration > 0 ? v.duration : 10;
     const rawTarget = sourceTimeOffset !== undefined ? sourceTimeOffset : currentTime;
     const targetOffset = Math.max(0, Math.min(vidDuration, rawTarget));
+    const timeDifference = Math.abs(v.currentTime - targetOffset);
 
-    // When playing, allow video to play continuously without micro-seeking stutter unless drift exceeds 0.15s
-    // When paused (or scrubbing), sync with high precision (0.04s)
-    const driftThreshold = isPlaying ? 0.15 : 0.04;
-    if (Math.abs(v.currentTime - targetOffset) > driftThreshold) {
+    // Case 1: When paused, or when jumping across a sliced clip boundary, force seek
+    if (!isPlaying || isAcrossCutBoundary) {
+      if (timeDifference > 0.01) {
+        requestVideoSeek(targetOffset);
+      }
+      return;
+    }
+
+    // Case 2: During normal continuous playback:
+    // ONLY seek if the video has drifted significantly away from timeline time (>120ms).
+    // NEVER overwrite video.currentTime if it is within the normal playback window to avoid decoder thrashing!
+    if (timeDifference > SYNC_THRESHOLD_SECONDS) {
       requestVideoSeek(targetOffset);
     }
-  }, [currentTime, sourceTimeOffset, isPlaying]);
+  }, [currentTime, sourceTimeOffset, isPlaying, isAcrossCutBoundary]);
 
   // Compute live CSS filters from Color Grading, LUT, chroma, and highlight/shadow tools
   const computedCssFilter = useMemo(() => {
@@ -1830,29 +1836,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
             </div>
           )}
 
-          {/* Seek-Lock Visual Feedback */}
-          {isSeekLocked && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '12px',
-                right: '12px',
-                backgroundColor: 'rgba(255, 71, 87, 0.85)',
-                color: '#FFFFFF',
-                fontSize: '10px',
-                fontWeight: 600,
-                padding: '2px 8px',
-                borderRadius: '9999px',
-                backdropFilter: 'blur(4px)',
-                zIndex: 20,
-              }}
-            >
-              SEEK-LOCK MUTEX
-            </div>
-          )}
-
-          {/* Dynamic Burned-In Subtitles (Webster Victory Tier) */}
-          {isSubtitlesActive !== false && !isTitleTrackHidden && (
+          {/* Dynamic Burned-In Subtitles (Webster Victory Tier) - Only visible when words exist */}
+          {isSubtitlesActive !== false && !isTitleTrackHidden && currentSentenceTokens.length > 0 && (
             <div
               id="monitor-burned-in-subtitles"
               data-testid="monitor-burned-in-subtitles"
@@ -1882,43 +1867,37 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                   maxWidth: '90%',
                 }}
               >
-                {currentSentenceTokens.length > 0 ? (
-                  currentSentenceTokens.map(tok => {
-                    const isActive = activeToken?.id === tok.id;
-                    return (
-                      <span
-                        key={tok.id}
-                        id={`subtitle-word-${tok.id}`}
-                        data-testid={`subtitle-word-${tok.id}`}
-                        onClick={e => {
-                          e.stopPropagation();
-                          onSeek(tok.start);
-                        }}
-                        title={`"${tok.text}" (${tok.start.toFixed(2)}s) - Click to seek`}
-                        style={{
-                          display: 'inline-block',
-                          fontSize: '15px',
-                          fontWeight: isActive ? 800 : 500,
-                          color: isActive ? '#000000' : '#FFFFFF',
-                          backgroundColor: isActive ? '#FFD32A' : 'transparent',
-                          borderRadius: '5px',
-                          padding: isActive ? '2px 7px' : '2px 3px',
-                          cursor: 'pointer',
-                          textShadow: isActive ? 'none' : '0 1px 4px rgba(0,0,0,0.85)',
-                          transform: isActive ? 'scale(1.08)' : 'scale(1.0)',
-                          boxShadow: isActive ? '0 0 12px rgba(255, 211, 42, 0.8)' : 'none',
-                          transition: 'all 0.1s cubic-bezier(0.16, 1, 0.3, 1)',
-                        }}
-                      >
-                        {tok.text}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <span style={{ fontSize: '13px', color: '#8A96A6', fontStyle: 'italic' }}>
-                    ScarletCut Real-time Video Monitor
-                  </span>
-                )}
+                {currentSentenceTokens.map(tok => {
+                  const isActive = activeToken?.id === tok.id;
+                  return (
+                    <span
+                      key={tok.id}
+                      id={`subtitle-word-${tok.id}`}
+                      data-testid={`subtitle-word-${tok.id}`}
+                      onClick={e => {
+                        e.stopPropagation();
+                        onSeek(tok.start);
+                      }}
+                      title={`"${tok.text}" (${tok.start.toFixed(2)}s) - Click to seek`}
+                      style={{
+                        display: 'inline-block',
+                        fontSize: '15px',
+                        fontWeight: isActive ? 800 : 500,
+                        color: isActive ? '#000000' : '#FFFFFF',
+                        backgroundColor: isActive ? '#FFD32A' : 'transparent',
+                        borderRadius: '5px',
+                        padding: isActive ? '2px 7px' : '2px 3px',
+                        cursor: 'pointer',
+                        textShadow: isActive ? 'none' : '0 1px 4px rgba(0,0,0,0.85)',
+                        transform: isActive ? 'scale(1.08)' : 'scale(1.0)',
+                        boxShadow: isActive ? '0 0 12px rgba(255, 211, 42, 0.8)' : 'none',
+                        transition: 'all 0.1s cubic-bezier(0.16, 1, 0.3, 1)',
+                      }}
+                    >
+                      {tok.text}
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}

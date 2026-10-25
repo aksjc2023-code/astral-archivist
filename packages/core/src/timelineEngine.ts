@@ -2,6 +2,7 @@ import {
   WordToken,
   PlaybackSegment,
   TimelineClip,
+  TimeRange,
   TimelineSeconds,
   SourceSeconds,
   VirtualSeconds,
@@ -120,8 +121,13 @@ export function buildPlaybackSegments(
 
     const gap = currToken.start - currentEnd;
 
-    // Check if tokens can coalesce: monotonic order and gap <= 85ms
-    if (gap <= EPSILON_MERGE_SEC && currToken.start >= currentStart) {
+    // Check if tokens can coalesce:
+    // 1. Monotonic order and gap <= 85ms
+    // 2. OR non-deleted pause token bridging speech/natural silence on the same media asset
+    const isSameMedia = !prevToken.mediaId || !currToken.mediaId || prevToken.mediaId === currToken.mediaId;
+    const isPauseBridge = isSameMedia && gap >= 0 && (Boolean(prevToken.isPause) || Boolean(currToken.isPause));
+
+    if ((gap <= EPSILON_MERGE_SEC || isPauseBridge) && currToken.start >= currentStart) {
       currentEnd = asSourceSeconds(Math.max(currentEnd, currToken.end));
     } else {
       // Close active segment if it satisfies minimum duration guard (30ms)
@@ -375,3 +381,188 @@ export function formatTimecode(seconds: number): { main: string; ms: string } {
   const ms = String(millis).padStart(3, '0');
   return { main, ms };
 }
+
+export interface RippleCutOptions {
+  /** Optional predicate or set of locked track IDs */
+  isTrackLocked?: (trackId: string) => boolean;
+}
+
+/**
+ * Pure Compound Ripple-Cut Reducer:
+ * Slices clips across all unlocked tracks intersecting [startTime, endTime],
+ * removes the cut interval, adjusts source in/out offsets so media never freezes or desyncs,
+ * and ripples all subsequent clips to the left by deltaT = (endTime - startTime).
+ */
+export function rippleCutTimeRange(
+  clips: readonly TimelineClip[],
+  startTime: number,
+  endTime: number,
+  options: RippleCutOptions = {}
+): TimelineClip[] {
+  if (startTime >= endTime || !Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+    return [...clips];
+  }
+
+  const deltaT = Number((endTime - startTime).toFixed(3));
+  const isLocked = options.isTrackLocked ?? (() => false);
+  const newClips: TimelineClip[] = [];
+
+  for (const clip of clips) {
+    if (isLocked(clip.trackId)) {
+      newClips.push(clip);
+      continue;
+    }
+
+    const clipStart = Number((clip.timelineStart ?? clip.sourceStart ?? 0).toFixed(3));
+    const clipDur = Number((clip.timelineDuration ?? clip.duration ?? 0).toFixed(3));
+    const clipEnd = Number((clipStart + clipDur).toFixed(3));
+    const clipIn = Number((clip.sourceIn ?? 0).toFixed(3));
+    const clipOut = Number((clip.sourceOut ?? (clipIn + clipDur)).toFixed(3));
+
+    // Case 1: Clip ends at or before cut begins -> Untouched
+    if (clipEnd <= startTime) {
+      newClips.push(clip);
+    }
+    // Case 2: Clip starts at or after cut ends -> Ripple backward by deltaT
+    else if (clipStart >= endTime) {
+      const newStart = asTimelineSeconds(Number(Math.max(0, clipStart - deltaT).toFixed(3)));
+      newClips.push({
+        ...clip,
+        timelineStart: newStart,
+        sourceStart: newStart,
+      });
+    }
+    // Case 3: Cut is completely inside the clip -> SPLICE into left and right chunks
+    else if (clipStart < startTime && clipEnd > endTime) {
+      const leftDur = Number((startTime - clipStart).toFixed(3));
+      const leftIn = clipIn;
+      const leftOut = Number((clipIn + leftDur).toFixed(3));
+
+      const leftPart: TimelineClip = {
+        ...clip,
+        id: `${clip.id}_part1_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timelineStart: asTimelineSeconds(clipStart),
+        timelineDuration: asSeconds(leftDur),
+        sourceIn: asSourceSeconds(leftIn),
+        sourceOut: asSourceSeconds(leftOut),
+        sourceStart: asTimelineSeconds(clipStart),
+        duration: asSeconds(leftDur),
+      };
+
+      const cutDurationFromClipStart = Number((endTime - clipStart).toFixed(3));
+      const rightDur = Number((clipEnd - endTime).toFixed(3));
+      const rightIn = Number((clipIn + cutDurationFromClipStart).toFixed(3));
+      const rightOut = clipOut;
+      const rightStart = asTimelineSeconds(Number(startTime.toFixed(3)));
+
+      const rightPart: TimelineClip = {
+        ...clip,
+        id: `${clip.id}_part2_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        timelineStart: rightStart,
+        timelineDuration: asSeconds(rightDur),
+        sourceIn: asSourceSeconds(rightIn),
+        sourceOut: asSourceSeconds(rightOut),
+        sourceStart: rightStart,
+        duration: asSeconds(rightDur),
+        transitionIn: undefined, // Prevent spurious transition on slice boundary
+      };
+
+      newClips.push(leftPart, rightPart);
+    }
+    // Case 4: Cut overlaps tail of clip -> Trim right edge
+    else if (clipStart < startTime && clipEnd <= endTime) {
+      const newDur = Number((startTime - clipStart).toFixed(3));
+      if (newDur > 0.005) {
+        const newOut = Number((clipIn + newDur).toFixed(3));
+        newClips.push({
+          ...clip,
+          timelineDuration: asSeconds(newDur),
+          sourceOut: asSourceSeconds(newOut),
+          duration: asSeconds(newDur),
+        });
+      }
+    }
+    // Case 5: Cut overlaps head of clip -> Trim head and shift to startTime
+    else if (clipStart >= startTime && clipEnd > endTime) {
+      const cutIntoClip = Number((endTime - clipStart).toFixed(3));
+      const newDur = Number((clipDur - cutIntoClip).toFixed(3));
+      if (newDur > 0.005) {
+        const newIn = Number((clipIn + cutIntoClip).toFixed(3));
+        const newStart = asTimelineSeconds(Number(startTime.toFixed(3)));
+        newClips.push({
+          ...clip,
+          timelineStart: newStart,
+          sourceStart: newStart,
+          timelineDuration: asSeconds(newDur),
+          sourceIn: asSourceSeconds(newIn),
+          duration: asSeconds(newDur),
+          transitionIn: undefined,
+        });
+      }
+    }
+    // Case 6: Clip is completely enclosed inside [startTime, endTime] -> Drop (deleted)
+  }
+
+  return newClips;
+}
+
+/**
+ * Merges overlapping or contiguous deleted word intervals into solid skip ranges.
+ */
+export function calculateSkipRanges(tokens: readonly WordToken[], targetMediaId?: string): TimeRange[] {
+  const deleted = tokens
+    .filter((w) => w.deleted && (!targetMediaId || w.mediaId === targetMediaId))
+    .sort((a, b) => a.start - b.start);
+
+  if (deleted.length === 0) return [];
+
+  const merged: TimeRange[] = [];
+  let current: TimeRange = { start: Number(deleted[0]!.start), end: Number(deleted[0]!.end) };
+
+  for (let i = 1; i < deleted.length; i++) {
+    const next = deleted[i]!;
+    // Merge if overlapping or within 40ms of each other
+    if (next.start <= current.end + 0.04) {
+      current.end = Math.max(current.end, Number(next.end));
+    } else {
+      merged.push({ start: Number(current.start.toFixed(3)), end: Number(current.end.toFixed(3)) });
+      current = { start: Number(next.start), end: Number(next.end) };
+    }
+  }
+  merged.push({ start: Number(current.start.toFixed(3)), end: Number(current.end.toFixed(3)) });
+  return merged;
+}
+
+/**
+ * Computes the inverse kept intervals to be rendered and merged into the final video.
+ */
+export function computeKeepRanges(totalDuration: number, skipRanges: readonly TimeRange[]): TimeRange[] {
+  if (skipRanges.length === 0) {
+    return totalDuration > 0 ? [{ start: 0, end: Number(totalDuration.toFixed(3)) }] : [];
+  }
+
+  const sortedSkips = [...skipRanges].sort((a, b) => a.start - b.start);
+  const keepRanges: TimeRange[] = [];
+  let cursor = 0;
+
+  for (const skip of sortedSkips) {
+    if (skip.start > cursor) {
+      // Keep everything between cursor and the start of the skip
+      keepRanges.push({
+        start: Number(cursor.toFixed(3)),
+        end: Number(skip.start.toFixed(3)),
+      });
+    }
+    cursor = Math.max(cursor, skip.end);
+  }
+
+  if (cursor < totalDuration) {
+    keepRanges.push({
+      start: Number(cursor.toFixed(3)),
+      end: Number(totalDuration.toFixed(3)),
+    });
+  }
+
+  return keepRanges.filter((r) => r.end - r.start > 0.02); // drop sub-frame slivers
+}
+

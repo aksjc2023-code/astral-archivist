@@ -20,17 +20,22 @@ import {
   INITIAL_MARKERS,
   INITIAL_TOOL_SETTINGS,
   buildPlaybackSegments,
+  calculateSkipRanges,
+  computeKeepRanges,
+  TimeRange,
   getNextValidTime,
   getProjectDuration,
   getClipAtTimelineTime,
   timelineToSourceTime,
   sourceToTimelineTime,
+  rippleCutTimeRange,
   purgeFillersAndPauses,
   restoreAllTokens,
   validateWordToken,
   validateTimelineClip,
   asTimelineSeconds,
   asSourceSeconds,
+  asVirtualSeconds,
   asSeconds,
   AspectRatio,
   synthesizeOverdubWavBytes,
@@ -54,6 +59,7 @@ import {
   ExportModal,
   ExportReadyDialog,
   FaultSimulatorBar,
+  StudioCaptureModal,
   IconSparkles,
 } from '@astral/ui-editor';
 
@@ -76,6 +82,7 @@ export const App: React.FC = () => {
   const [lastExportFileName, setLastExportFileName] = useState('ScarletCut_Export_2026.mp4');
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureStatus, setCaptureStatus] = useState('');
+  const [activeStudioCapture, setActiveStudioCapture] = useState<'record-video' | 'capture-screen' | 'record-audio' | 'quick-video' | null>(null);
 
   // WebGPU Whisper Live Transcription State
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -143,6 +150,7 @@ export const App: React.FC = () => {
   const [isExportReadyOpen, setIsExportReadyOpen] = useState(false);
   const [isFaultSimulatorOpen, setIsFaultSimulatorOpen] = useState(false);
   const [isSeekLocked, setIsSeekLocked] = useState(false);
+  const [isAcrossCutBoundary, setIsAcrossCutBoundary] = useState(false);
 
   // Ref to retain and cleanup seek-lock timeout
   const seekLockTimeoutRef = useRef<number | null>(null);
@@ -226,6 +234,18 @@ export const App: React.FC = () => {
     mediaIds.forEach(id => {
       const assetTokens = tokensByMedia[id] ?? [];
       map.set(id, buildPlaybackSegments(assetTokens, id).segments);
+    });
+    return map;
+  }, [tokensByMedia, clips]);
+
+  // Asset-scoped skip ranges: only contiguous intervals where words are explicitly marked deleted
+  const skipRangesByMediaId = useMemo(() => {
+    const map = new Map<string, TimeRange[]>();
+    const mediaIds = new Set(clips.map(c => c.mediaId).filter(Boolean) as string[]);
+    mediaIds.add('asset_1');
+    mediaIds.forEach(id => {
+      const assetTokens = tokensByMedia[id] ?? [];
+      map.set(id, calculateSkipRanges(assetTokens, id));
     });
     return map;
   }, [tokensByMedia, clips]);
@@ -518,35 +538,91 @@ export const App: React.FC = () => {
     }
   }, [redoStack, tokensByMedia, clips]);
 
-  // Word Token Cut / Toggle Action (Ripple Editing)
-  const handleToggleDeleteToken = useCallback((tokenId: string) => {
-    pushHistory(tokensByMedia, clips);
+  // Compound Ripple-Cut helper: slices clips intersecting [cutStart, cutEnd], ripples trailing clips,
+  // shifts words past cutEnd, and adjusts playhead
+  const applyRippleCutTimeRange = useCallback((cutStart: number, cutEnd: number) => {
+    if (cutStart >= cutEnd) return;
+    const deltaT = Number((cutEnd - cutStart).toFixed(3));
+
+    // 1. Slice and ripple clips across all unlocked tracks
+    setClips(prevClips => {
+      const updatedClips = rippleCutTimeRange(prevClips, cutStart, cutEnd, {
+        isTrackLocked: (trackId) => Boolean(trackStates[trackId]?.locked),
+      });
+      for (const c of updatedClips) {
+        try {
+          validateTimelineClip(c);
+        } catch {}
+      }
+      return updatedClips;
+    });
+
+    // 2. Ripple timestamps of remaining tokens across current transcript
     setTokensByMedia(prev => {
       const currentList = prev[activeTranscriptMediaId] ?? [];
-      const updated = currentList.map(t => {
-        if (t.id !== tokenId) return t;
-        const u = { ...t, deleted: !t.deleted };
-        validateWordToken(u);
-        return u;
-      });
+      const updated = currentList
+        .filter(w => !(w.start >= cutStart - 0.01 && w.end <= cutEnd + 0.01 && w.deleted))
+        .map(w => {
+          if (w.start >= cutEnd - 0.01) {
+            const newStart = asSourceSeconds(Math.max(cutStart, Number((w.start - deltaT).toFixed(3))));
+            const newEnd = asSourceSeconds(Math.max(cutStart, Number((w.end - deltaT).toFixed(3))));
+            return { ...w, start: newStart, end: newEnd };
+          }
+          return w;
+        });
       return { ...prev, [activeTranscriptMediaId]: updated };
+    });
+
+    // 3. Adjust playhead if inside cut zone or trailing
+    setCurrentTime(prevTime => {
+      if (prevTime > cutStart && prevTime <= cutEnd) {
+        return cutStart;
+      } else if (prevTime > cutEnd) {
+        return Math.max(cutStart, Number((prevTime - deltaT).toFixed(3)));
+      }
+      return prevTime;
+    });
+  }, [trackStates, activeTranscriptMediaId]);
+
+  // Word Token Cut / Toggle Action (Non-Destructive Skip-List)
+  const handleToggleDeleteToken = useCallback((tokenId: string) => {
+    const currentList = tokensByMedia[activeTranscriptMediaId] ?? [];
+    const targetToken = currentList.find(t => t.id === tokenId);
+    if (!targetToken) return;
+
+    pushHistory(tokensByMedia, clips);
+
+    // Toggle deleted state without destructive timeline clip-slicing
+    setTokensByMedia(prev => {
+      const list = prev[activeTranscriptMediaId] ?? [];
+      return {
+        ...prev,
+        [activeTranscriptMediaId]: list.map(t =>
+          t.id === tokenId ? { ...t, deleted: !t.deleted } : t
+        ),
+      };
     });
   }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
   // Word Token Multiple Cut Action (Backspace / Range selection)
   const handleToggleDeleteMultipleTokens = useCallback((tokenIds: string[]) => {
     if (tokenIds.length === 0) return;
+    const currentList = tokensByMedia[activeTranscriptMediaId] ?? [];
     const idSet = new Set(tokenIds);
+    const targetTokens = currentList.filter(t => idSet.has(t.id));
+    if (targetTokens.length === 0) return;
+
     pushHistory(tokensByMedia, clips);
+
+    // Mark tokens as deleted without destructive timeline clip-slicing
     setTokensByMedia(prev => {
-      const currentList = prev[activeTranscriptMediaId] ?? [];
-      const updated = currentList.map(t => {
-        if (!idSet.has(t.id)) return t;
-        const u = { ...t, deleted: true };
-        validateWordToken(u);
-        return u;
-      });
-      return { ...prev, [activeTranscriptMediaId]: updated };
+      const list = prev[activeTranscriptMediaId] ?? [];
+      return {
+        ...prev,
+        [activeTranscriptMediaId]: list.map(t =>
+          idSet.has(t.id) ? { ...t, deleted: true } : t
+        ),
+      };
     });
   }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
@@ -772,31 +848,44 @@ export const App: React.FC = () => {
         const appliedDelta = Math.max(-Math.max(0, maxLeftExtension), Math.min(maxDelta, deltaSec));
         const newStart = asTimelineSeconds(Number((curStart + appliedDelta).toFixed(2)));
         const newDur = asSeconds(Number((curDur - appliedDelta).toFixed(2)));
-        const newIn = asSourceSeconds(Number((c.mediaId ? curIn + appliedDelta : 0).toFixed(2)));
+        const newIn = asSourceSeconds(Number((c.mediaId ? Math.max(0, curIn + appliedDelta) : 0).toFixed(2)));
+        const newOut = asSourceSeconds(Number((c.mediaId ? curOut : newDur).toFixed(2)));
         const updated: TimelineClip = {
           ...c,
           timelineStart: newStart,
           timelineDuration: newDur,
           sourceIn: newIn,
-          sourceOut: curOut,
+          sourceOut: newOut,
           sourceStart: newStart,
           duration: newDur,
         };
-        validateTimelineClip(updated);
+        try {
+          validateTimelineClip(updated);
+        } catch {
+          updated.sourceIn = asSourceSeconds(0);
+          updated.sourceOut = asSourceSeconds(newDur);
+        }
         return updated;
       } else {
         // Guard against extending past next sibling boundary
         const maxPossibleDur = Number.isFinite(minNextStart) ? minNextStart - curStart : Infinity;
         const requestedDur = Math.max(0.5, Number((curDur + deltaSec).toFixed(2)));
         const newDur = asSeconds(Math.min(requestedDur, maxPossibleDur));
-        const newOut = asSourceSeconds(Number((curIn + newDur).toFixed(2)));
+        const newIn = asSourceSeconds(Number((c.mediaId ? curIn : 0).toFixed(2)));
+        const newOut = asSourceSeconds(Number((c.mediaId ? curIn + newDur : newDur).toFixed(2)));
         const updated: TimelineClip = {
           ...c,
           timelineDuration: newDur,
+          sourceIn: newIn,
           sourceOut: newOut,
           duration: newDur,
         };
-        validateTimelineClip(updated);
+        try {
+          validateTimelineClip(updated);
+        } catch {
+          updated.sourceIn = asSourceSeconds(0);
+          updated.sourceOut = asSourceSeconds(newDur);
+        }
         return updated;
       }
     }));
@@ -1492,89 +1581,64 @@ export const App: React.FC = () => {
     }
   }, [activeSubNav, customFolders, clips]);
 
-  // Quick Capture: getUserMedia / getDisplayMedia → MediaRecorder → Media Bin
-  const handleQuickCapture = useCallback(async (
+  // Quick Capture Studio Launcher
+  const handleQuickCapture = useCallback((
     action: 'record-video' | 'capture-screen' | 'record-audio' | 'quick-video'
   ) => {
     if (!navigator.mediaDevices) {
       window.alert('Media devices API is not available in this browser.');
       return;
     }
+    setActiveStudioCapture(action);
+  }, []);
 
-    let stream: MediaStream | null = null;
-    try {
-      setIsCapturing(true);
-      if (action === 'capture-screen') {
-        setCaptureStatus('Select a screen or window to capture…');
-        stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-      } else if (action === 'record-audio') {
-        setCaptureStatus('Recording microphone (5s)…');
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-      } else {
-        setCaptureStatus(action === 'quick-video' ? 'Quick webcam clip (5s)…' : 'Recording webcam (8s)…');
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      }
-
-      const mimeCandidates = [
-        'video/webm;codecs=vp9,opus',
-        'video/webm;codecs=vp8,opus',
-        'video/webm',
-        'audio/webm',
-      ];
-      const mimeType = mimeCandidates.find(m => {
-        try {
-          return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m);
-        } catch {
-          return false;
-        }
-      }) ?? '';
-
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      const chunks: BlobPart[] = [];
-      recorder.ondataavailable = e => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      const durationMs = action === 'record-audio' || action === 'quick-video' ? 5000 : 8000;
-
-      const recordedBlob = await new Promise<Blob>((resolve, reject) => {
-        recorder.onerror = () => reject(new Error('MediaRecorder failed'));
-        recorder.onstop = () => {
-          const type = action === 'record-audio' ? 'audio/webm' : (mimeType || 'video/webm');
-          resolve(new Blob(chunks, { type }));
-        };
-        recorder.start(250);
-        window.setTimeout(() => {
-          if (recorder.state !== 'inactive') recorder.stop();
-        }, durationMs);
-      });
-
-      stream.getTracks().forEach(t => t.stop());
-      stream = null;
-
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const nameMap = {
-        'record-video': `Webcam_${stamp}.webm`,
-        'capture-screen': `Screencast_${stamp}.webm`,
-        'record-audio': `Audio_${stamp}.webm`,
-        'quick-video': `QuickVideo_${stamp}.webm`,
-      } as const;
-      const file = new File([recordedBlob], nameMap[action], { type: recordedBlob.type });
-      handleFilesAdded([file]);
-      setCaptureStatus('Capture saved to My Files');
-      window.setTimeout(() => setCaptureStatus(''), 2000);
-    } catch (err) {
-      console.error('[QuickCapture]', err);
-      window.alert(
-        err instanceof Error
-          ? `Capture cancelled or failed: ${err.message}`
-          : 'Capture cancelled or failed.'
-      );
-    } finally {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      setIsCapturing(false);
-    }
+  // Studio Capture Completion Handler
+  const handleStudioCaptureComplete = useCallback((file: File, options?: { durationSec: number }) => {
+    setActiveStudioCapture(null);
+    handleFilesAdded([file]);
+    setCaptureStatus(`Captured ${options?.durationSec ?? 0}s media saved to My Files`);
+    window.setTimeout(() => setCaptureStatus(''), 2500);
   }, [handleFilesAdded]);
+
+  // Remove imported file from media library and cleanup memory
+  const handleDeleteAsset = useCallback((asset: MediaAsset) => {
+    // 1. Remove from mediaAssets
+    setMediaAssets(prev => prev.filter(a => a.id !== asset.id));
+
+    // 2. Remove raw File from fileBlobMapRef
+    fileBlobMapRef.current.delete(asset.id);
+
+    // 3. Remove tokens
+    setTokensByMedia(prev => {
+      const next = { ...prev };
+      delete next[asset.id];
+      return next;
+    });
+
+    // 4. Revoke object URL if created
+    if (asset.locator && asset.locator.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(asset.locator);
+        blobUrlsRef.current.delete(asset.locator);
+      } catch {}
+    }
+
+    // 5. Remove any timeline clips associated with this asset
+    setClips(prev => {
+      const filtered = prev.filter(c => c.mediaId !== asset.id);
+      return filtered;
+    });
+
+    // 6. If currently active preview asset was deleted, fallback to first available
+    if (activeMediaId === asset.id || previewAssetId === asset.id) {
+      const remaining = mediaAssets.filter(a => a.id !== asset.id);
+      if (remaining.length > 0) {
+        const nextAsset = remaining[0]!;
+        setPreviewAssetId(nextAsset.id);
+        setActiveTranscriptMediaId(nextAsset.id);
+      }
+    }
+  }, [activeMediaId, previewAssetId, mediaAssets]);
 
   // On-demand transcribe button trigger for active video
   const handleTranscribeCurrentMedia = useCallback(async () => {
@@ -1656,13 +1720,37 @@ export const App: React.FC = () => {
         const sDur = Number((c.timelineDuration ?? c.duration ?? 5.0).toFixed(2));
         const sOut = Number((c.sourceOut ?? (sIn + sDur)).toFixed(2));
 
-        // BUG-02 Fix: Build playback segments from media tokens so cuts/purges are preserved
+        // Non-destructive skip list export: compute keep ranges from deleted words
         const mediaTokens = c.mediaId ? tokensByMedia[c.mediaId] : undefined;
         let clipSegments: PlaybackSegment[] | undefined;
         if (mediaTokens && mediaTokens.length > 0) {
-          const rebuild = buildPlaybackSegments(mediaTokens, c.mediaId);
-          if (rebuild.segments && rebuild.segments.length > 0) {
-            clipSegments = rebuild.segments;
+          const skips = calculateSkipRanges(mediaTokens, c.mediaId);
+          if (skips.length > 0) {
+            const keeps = computeKeepRanges(sOut, skips);
+            const activeKeeps = keeps
+              .map(k => ({
+                start: Math.max(sIn, k.start),
+                end: Math.min(sOut, k.end),
+              }))
+              .filter(k => k.end - k.start > 0.02);
+
+            if (activeKeeps.length > 0) {
+              let curVirt = 0;
+              clipSegments = activeKeeps.map((k, idx) => {
+                const dur = Number((k.end - k.start).toFixed(3));
+                const seg: PlaybackSegment = {
+                  id: `seg_${c.id}_${idx}`,
+                  mediaId: c.mediaId || 'clip',
+                  sourceStart: asSourceSeconds(k.start),
+                  sourceEnd: asSourceSeconds(k.end),
+                  virtualStart: asVirtualSeconds(curVirt),
+                  virtualEnd: asVirtualSeconds(curVirt + dur),
+                  duration: asSeconds(dur),
+                };
+                curVirt += dur;
+                return seg;
+              });
+            }
           }
         }
 
@@ -1786,6 +1874,12 @@ export const App: React.FC = () => {
           format: requestedFormat,
           outputFilename: fileName,
           audioInputs,
+          activeFilter: currentFilter !== 'none' ? currentFilter : undefined,
+          activeFilterIntensity: currentFilterIntensity,
+          colorAdjustments: toolSettings.colorAdjustments,
+          rotationAngle,
+          activeTransition: currentTransition,
+          activeTransitionDuration: activeClip?.transitionDuration || 1.2,
           onProgress: p => {
             callbacks.onProgress(p.percent, p.stage, p.log);
             if (p.memfsAllocatedMb !== undefined) {
@@ -1980,7 +2074,7 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Unified seek coordinator: leaps over cut segments if target falls into a cut interval
+  // Unified seek coordinator: leaps over deleted word skip-ranges
   const handleSeek = useCallback((targetTime: number) => {
     let finalTime = targetTime;
     const targetTimeline = asTimelineSeconds(targetTime);
@@ -1989,29 +2083,26 @@ export const App: React.FC = () => {
 
     if (currentClip) {
       const clipMediaId = currentClip.mediaId ?? 'asset_1';
-      const clipSegments = segmentsByMediaId.get(clipMediaId) ?? [];
+      const skipRanges = skipRangesByMediaId.get(clipMediaId) ?? [];
 
-      if (clipSegments.length > 0) {
+      if (skipRanges.length > 0) {
         const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
-        const firstSeg = clipSegments[0];
-        const lastSeg = clipSegments[clipSegments.length - 1];
-        if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
-          const jumpResult = getNextValidTime(sourcePos, clipSegments);
-          if (jumpResult.didJump) {
-            finalTime = sourceToTimelineTime(jumpResult.nextTime, currentClip);
+        for (const range of skipRanges) {
+          if (sourcePos >= range.start && sourcePos < range.end) {
+            finalTime = sourceToTimelineTime(asSourceSeconds(range.end), currentClip);
             setTelemetry(prev => ({
               ...prev,
-              searchLatencyMs: jumpResult.searchLatencyMs,
-              recoveryLog: `[RIPPLE SEEK] O(log N) leap across cut gap to ${jumpResult.nextTime.toFixed(2)}s (${jumpResult.searchLatencyMs}ms).`,
+              recoveryLog: `[SKIP SEEK] Non-destructive leap across deleted word range [${range.start.toFixed(2)}s - ${range.end.toFixed(2)}s] to ${finalTime.toFixed(2)}s.`,
             }));
+            break;
           }
         }
       }
     }
     setCurrentTime(Math.max(0, Math.min(projectDuration, finalTime)));
-  }, [clips, segmentsByMediaId, projectDuration]);
+  }, [clips, skipRangesByMediaId, projectDuration]);
 
-  // Playback Frame Loop: STRICTLY STOPPED WHEN PAUSED + RIPPLE LEAPS ACROSS CUTS
+  // Playback Frame Loop: STRICTLY STOPPED WHEN PAUSED + LEAPS ACROSS SKIP RANGES
   useEffect(() => {
     if (!isPlaying) return; // Completely STOP loop when paused to eliminate re-renders!
 
@@ -2025,30 +2116,29 @@ export const App: React.FC = () => {
       setCurrentTime(prevTime => {
         let rawNext = prevTime + deltaSec;
 
-        // Transcript ripple cuts integration:
-        // Evaluated strictly against the active clip's media asset playback segments
+        // Transcript non-destructive skip list:
+        // Evaluated strictly against the active clip's media asset skip ranges
         const targetTimeline = asTimelineSeconds(rawNext);
         const currentClip = getClipAtTimelineTime(targetTimeline, clips, 'track_video')
           ?? clips.find(c => c.trackId === 'track_video');
 
         if (currentClip) {
           const clipMediaId = currentClip.mediaId ?? 'asset_1';
-          const clipSegments = segmentsByMediaId.get(clipMediaId) ?? [];
+          const skipRanges = skipRangesByMediaId.get(clipMediaId) ?? [];
 
-          if (clipSegments.length > 0) {
+          if (skipRanges.length > 0) {
             const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
-            const firstSeg = clipSegments[0];
-            const lastSeg = clipSegments[clipSegments.length - 1];
-
-            if (firstSeg && lastSeg && sourcePos >= firstSeg.sourceStart - 0.05 && sourcePos <= lastSeg.sourceEnd + 0.05) {
-              const jumpResult = getNextValidTime(sourcePos, clipSegments);
-              if (jumpResult.didJump) {
-                rawNext = sourceToTimelineTime(jumpResult.nextTime, currentClip);
+            for (const range of skipRanges) {
+              if (sourcePos >= range.start && sourcePos < range.end) {
+                const leapSec = range.end - sourcePos;
+                rawNext = rawNext + leapSec;
+                setIsAcrossCutBoundary(true);
+                setTimeout(() => setIsAcrossCutBoundary(false), 50);
                 setTelemetry(prev => ({
                   ...prev,
-                  searchLatencyMs: jumpResult.searchLatencyMs,
-                  recoveryLog: `[RIPPLE PLAYBACK] O(log N) leap across cut gap to ${jumpResult.nextTime.toFixed(2)}s (${jumpResult.searchLatencyMs}ms).`,
+                  recoveryLog: `[SKIP PLAYBACK] Smooth leap across deleted word range [${range.start.toFixed(2)}s - ${range.end.toFixed(2)}s] to ${rawNext.toFixed(2)}s.`,
                 }));
+                break;
               }
             }
           }
@@ -2069,7 +2159,7 @@ export const App: React.FC = () => {
 
     animationFrameId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [isPlaying, projectDuration, lastVideoEnd, playbackSpeed, clips, segmentsByMediaId]);
+  }, [isPlaying, projectDuration, lastVideoEnd, playbackSpeed, clips, skipRangesByMediaId]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -2253,6 +2343,7 @@ export const App: React.FC = () => {
                 }
               }}
               onAddToTimeline={handleAddToTimeline}
+              onDeleteAsset={handleDeleteAsset}
             />
           )}
 
@@ -2340,6 +2431,7 @@ export const App: React.FC = () => {
             onSeekLockChange={setIsSeekLocked}
             videoPreviewUrl={activeVideoUrl}
             sourceTimeOffset={activeClipSourceTime}
+            isAcrossCutBoundary={isAcrossCutBoundary}
             playbackSpeed={playbackSpeed}
             onPlaybackSpeedChange={setPlaybackSpeed}
             rotationAngle={rotationAngle}
@@ -2598,6 +2690,16 @@ export const App: React.FC = () => {
             </span>
           </div>
         </div>
+      )}
+
+      {/* Professional Studio Capture Modal (Webcam, Screen, Mic Audio, Quick Video) */}
+      {activeStudioCapture && (
+        <StudioCaptureModal
+          isOpen={!!activeStudioCapture}
+          captureType={activeStudioCapture}
+          onClose={() => setActiveStudioCapture(null)}
+          onComplete={handleStudioCaptureComplete}
+        />
       )}
 
       {/* Fault Simulator Bar */}

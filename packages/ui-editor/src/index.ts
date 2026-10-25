@@ -14,3 +14,4 @@ export * from './components/timeline/MultiTrackTimeline';
 export * from './components/modals/ExportModal';
 export * from './components/modals/ExportReadyDialog';
 export * from './components/modals/FaultSimulatorBar';
+export * from './components/modals/StudioCaptureModal';

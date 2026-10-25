@@ -90,6 +90,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const rulerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isDraggingRef = useRef(false);
+  const playheadRef = useRef<HTMLDivElement>(null);
+
+
 
   // Ctrl + Mouse Wheel for Zoom In/Out & Trackpad horizontal scrolling
   const handleTimelineWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -171,6 +174,13 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
   const pxPerSec = 22 * scale;
   const totalTimelineWidthPx = Math.max(1400, duration * pxPerSec + 300);
+
+  // Direct DOM transform mutation bypassing React render lifecycle for 60fps buttery smoothness
+  useEffect(() => {
+    if (playheadRef.current) {
+      playheadRef.current.style.transform = `translateX(${currentTime * pxPerSec}px)`;
+    }
+  }, [currentTime, pxPerSec]);
 
   const calculateTimeFromClientX = (clientX: number) => {
     if (!rulerRef.current) return 0;
@@ -1251,16 +1261,18 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
           {/* Red Draggable Playhead Scrubber (Page 1) */}
           <div
+            ref={playheadRef}
             style={{
               position: 'absolute',
               top: 0,
               bottom: 0,
-              left: `${playheadPositionPx}px`,
+              left: 0,
               width: '2px',
               backgroundColor: '#FF4757',
               zIndex: 35,
               pointerEvents: 'none',
-              transform: 'translateX(-1px)',
+              transform: `translateX(${playheadPositionPx}px)`,
+              willChange: 'transform',
             }}
           >
             {/* Top Playhead Scrubber Badge on Ruler with Live Timecode Tooltip */}

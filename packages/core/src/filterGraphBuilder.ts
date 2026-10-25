@@ -3,7 +3,7 @@
  * Zero-DOM dependency (compatible with lib: ["ES2022"])
  */
 
-import { AspectRatio, PlaybackSegment, WordToken, asSourceSeconds } from './types';
+import { AspectRatio, PlaybackSegment, WordToken, TimeRange, asSourceSeconds } from './types';
 import { sourceToVirtualTime } from './timelineEngine';
 
 export interface AssScriptOptions {
@@ -272,5 +272,44 @@ export function generateFfmpegFilterComplex(
     videoMap: finalVideoMap,
     audioMap: finalAudioMap,
     segmentCount: segments.length,
+  };
+}
+
+/**
+ * Builds an FFmpeg filter_complex command that trims the kept segments
+ * and seamlessly concatenates them into one continuous stream with reset PTS.
+ */
+export function buildTrimConcatFilter(keepRanges: readonly TimeRange[]): {
+  filterComplex: string;
+  outputMap: string[];
+} {
+  if (keepRanges.length === 0) {
+    throw new Error('No video segments to export (entire video skipped).');
+  }
+
+  // If there's only 1 segment, just trim it directly
+  if (keepRanges.length === 1) {
+    const { start, end } = keepRanges[0]!;
+    const filter = `[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v];[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a]`;
+    return { filterComplex: filter, outputMap: ['-map', '[v]', '-map', '[a]'] };
+  }
+
+  let filterComplex = '';
+  const segmentLabels: string[] = [];
+
+  keepRanges.forEach((range, idx) => {
+    const vTag = `v${idx}`;
+    const aTag = `a${idx}`;
+    filterComplex += `[0:v]trim=start=${range.start}:end=${range.end},setpts=PTS-STARTPTS[${vTag}];`;
+    filterComplex += `[0:a]atrim=start=${range.start}:end=${range.end},asetpts=PTS-STARTPTS[${aTag}];`;
+    segmentLabels.push(`[${vTag}][${aTag}]`);
+  });
+
+  // Concat all segments into a single audio/video stream
+  filterComplex += `${segmentLabels.join('')}concat=n=${keepRanges.length}:v=1:a=1[outv][outa]`;
+
+  return {
+    filterComplex,
+    outputMap: ['-map', '[outv]', '-map', '[outa]'],
   };
 }

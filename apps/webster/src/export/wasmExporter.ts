@@ -35,6 +35,20 @@ export interface WasmExportOptions {
   format?: 'MP4' | 'MOV' | 'WebM' | 'GIF' | 'MP3';
   outputFilename?: string;
   audioInputs?: AudioTrackInput[];
+  activeFilter?: string;
+  activeFilterIntensity?: number;
+  colorAdjustments?: {
+    brightness?: number;
+    contrast?: number;
+    saturation?: number;
+    gamma?: number;
+    shadows?: number;
+    highlights?: number;
+    whitebalance?: boolean;
+  };
+  rotationAngle?: number;
+  activeTransition?: string;
+  activeTransitionDuration?: number;
   onProgress?: (progress: WasmExportProgress) => void;
   onLog?: (log: string) => void;
 }
@@ -55,6 +69,99 @@ export function resolveExportFormatInfo(format?: string, outputFilename?: string
   else if (ext === 'mov') mimeType = 'video/quicktime';
 
   return { ext, mimeType };
+}
+
+/**
+ * Builds FFmpeg video filter chain strings for active filters, color adjustments, rotation, and transitions.
+ */
+export function buildExportVideoFilters(
+  options: WasmExportOptions,
+  totalDuration?: number
+): string[] {
+  const filters: string[] = [];
+
+  // 1. Video Scale & Aspect Ratio filter
+  const scaleFilter = buildVideoScaleFilter(options.resolution, options.aspectRatio);
+  if (scaleFilter) {
+    filters.push(scaleFilter);
+  }
+
+  // 2. Rotation
+  if (options.rotationAngle) {
+    const rot = ((options.rotationAngle % 360) + 360) % 360;
+    if (rot === 90) filters.push('transpose=1');
+    else if (rot === 180) filters.push('hflip,vflip');
+    else if (rot === 270) filters.push('transpose=2');
+  }
+
+  // 3. Color Adjustments (brightness, contrast, saturation, gamma, white balance)
+  const colors = options.colorAdjustments;
+  if (colors) {
+    const b = (colors.brightness ?? 0) / 100;
+    const c = Math.max(0.2, 1 + (colors.contrast ?? 0) / 100);
+    const s = Math.max(0, 1 + (colors.saturation ?? 0) / 100);
+    const g = Math.max(0.5, Math.min(2.0, 1 + (colors.gamma ?? 0) / 100));
+
+    if (b !== 0 || c !== 1 || s !== 1 || g !== 1) {
+      filters.push(`eq=brightness=${b.toFixed(2)}:contrast=${c.toFixed(2)}:saturation=${s.toFixed(2)}:gamma=${g.toFixed(2)}`);
+    }
+
+    if (colors.whitebalance) {
+      filters.push('colorbalance=rs=0.1:gs=0.03:bs=-0.1');
+    }
+  }
+
+  // 4. Preset Filters
+  const filterName = options.activeFilter;
+  if (filterName && filterName !== 'none') {
+    const intensity = Math.max(0.1, Math.min(1.5, (options.activeFilterIntensity ?? 100) / 100));
+    if (filterName === 'Retro Film' || filterName === 'Sepia') {
+      filters.push(`colorchannelmixer=.393:.769:.189:0:.349:.686:.168:0:.272:.534:.131,eq=contrast=${(1 + 0.15 * intensity).toFixed(2)}:saturation=${(1 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Cyberpunk Neon' || filterName === 'Cyberpunk') {
+      filters.push(`hue=h=180:s=${(1 + 1.2 * intensity).toFixed(2)},eq=contrast=${(1 + 0.3 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Golden Sunset') {
+      filters.push(`colorbalance=rs=${(0.2 * intensity).toFixed(2)}:gs=${(0.08 * intensity).toFixed(2)}:bs=${(-0.15 * intensity).toFixed(2)},eq=saturation=${(1 + 0.5 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Moody B&W' || filterName === 'Grayscale' || filterName === 'Noir Fade') {
+      filters.push(`hue=s=0,eq=contrast=${(1 + 0.35 * intensity).toFixed(2)}`);
+    } else if (filterName === 'VHS Distortion') {
+      filters.push(`hue=h=90,eq=contrast=${(1 + 0.4 * intensity).toFixed(2)}:saturation=${(1 + 0.6 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Teal & Orange') {
+      filters.push(`colorbalance=rs=${(0.18 * intensity).toFixed(2)}:gs=${(-0.05 * intensity).toFixed(2)}:bs=${(-0.12 * intensity).toFixed(2)}:rh=${(-0.08 * intensity).toFixed(2)}:gh=${(0.08 * intensity).toFixed(2)}:bh=${(0.2 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Soft Bloom') {
+      filters.push(`eq=brightness=${(0.06 * intensity).toFixed(2)}:contrast=${(1 - 0.08 * intensity).toFixed(2)}:saturation=${(1 + 0.2 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Featured Punch') {
+      filters.push(`eq=contrast=${(1 + 0.3 * intensity).toFixed(2)}:saturation=${(1 + 0.35 * intensity).toFixed(2)}`);
+    } else if (filterName === 'RGB Split') {
+      filters.push(`hue=h=45:s=${(1 + 0.5 * intensity).toFixed(2)},eq=contrast=${(1 + 0.3 * intensity).toFixed(2)}`);
+    } else if (filterName === 'Polaroid Warm') {
+      filters.push(`colorbalance=rs=0.15:gs=0.05:bs=-0.1,eq=contrast=1.08:saturation=1.2`);
+    } else if (filterName === 'Motion Blur Soft') {
+      filters.push('boxblur=2:1');
+    } else {
+      filters.push(`eq=contrast=${(1 + 0.2 * intensity).toFixed(2)}:saturation=${(1 + 0.2 * intensity).toFixed(2)}`);
+    }
+  }
+
+  // 5. Transitions
+  const transition = options.activeTransition;
+  if (transition && totalDuration && totalDuration > 1.5) {
+    const transDur = Math.min(1.2, options.activeTransitionDuration || 1.0);
+    const transLower = transition.toLowerCase();
+
+    if (transLower.includes('fade') || transLower.includes('dissolve') || transLower.includes('cross') || transLower.includes('film')) {
+      const outStart = Math.max(0, totalDuration - transDur);
+      filters.push(`fade=t=in:st=0:d=${transDur.toFixed(2)},fade=t=out:st=${outStart.toFixed(2)}:d=${transDur.toFixed(2)}`);
+    } else if (transLower.includes('flash') || transLower.includes('white')) {
+      const outStart = Math.max(0, totalDuration - transDur);
+      filters.push(`fade=t=in:st=0:d=${(transDur * 0.5).toFixed(2)}:color=white,fade=t=out:st=${outStart.toFixed(2)}:d=${(transDur * 0.5).toFixed(2)}:color=white`);
+    } else if (transLower.includes('zoom') || transLower.includes('push') || transLower.includes('slide') || transLower.includes('whip') || transLower.includes('glitch')) {
+      // Clean smooth fade transition effect fallback for full visual continuity across cuts
+      const outStart = Math.max(0, totalDuration - transDur);
+      filters.push(`fade=t=in:st=0:d=${transDur.toFixed(2)},fade=t=out:st=${outStart.toFixed(2)}:d=${transDur.toFixed(2)}`);
+    }
+  }
+
+  return filters;
 }
 
 let ffmpegInstance: FFmpeg | null = null;
@@ -147,7 +254,7 @@ export async function exportVideoWithFfmpegWasm(
       onProgress?.({
         stage: mode === 'stream-copy'
           ? 'Executing fast stream-copy (-c copy)...'
-          : 'Rendering frame pipeline with ASS subtitle burn-in...',
+          : 'Rendering frame pipeline with subtitle burn-in...',
         percent: pct,
         memfsAllocatedMb: inputSizeMb,
       });
@@ -169,9 +276,11 @@ export async function exportVideoWithFfmpegWasm(
       let ffmpegArgs: string[] = [];
 
       let subFileName: string | undefined;
-      const videoScaleFilter = buildVideoScaleFilter(resolution, aspectRatio);
+      const customVideoFilters = buildExportVideoFilters(options, segments.reduce((sum, s) => sum + s.duration, 0));
+      const combinedVideoFilterStr = customVideoFilters.join(',');
+      const hasCustomVideoStyling = customVideoFilters.length > 0;
 
-      if (mode === 'stream-copy' && segments.length > 0) {
+      if (mode === 'stream-copy' && !hasCustomVideoStyling && segments.length > 0) {
         const concatList = generateConcatDemuxerList(segments, inputFileName);
         const concatFileName = 'concat_manifest.txt';
         await ffmpeg.writeFile(concatFileName, new TextEncoder().encode(concatList));
@@ -196,7 +305,7 @@ export async function exportVideoWithFfmpegWasm(
         if (segments.length > 0) {
           const { filterComplex, videoMap, audioMap } = generateFfmpegFilterComplex(segments, {
             subtitleVirtualFileName: subFileName,
-            videoScaleFilter,
+            videoScaleFilter: combinedVideoFilterStr || undefined,
           });
 
           ffmpegArgs = [
@@ -223,13 +332,13 @@ export async function exportVideoWithFfmpegWasm(
         } else if (ext === 'gif') {
           ffmpegArgs = [
             '-i', inputFileName,
-            '-vf', videoScaleFilter ? `${videoScaleFilter},fps=12` : 'fps=12,scale=480:-1:flags=lanczos',
+            '-vf', combinedVideoFilterStr ? `${combinedVideoFilterStr},fps=12` : 'fps=12,scale=480:-1:flags=lanczos',
             outputFileName,
           ];
         } else {
           ffmpegArgs = [
             '-i', inputFileName,
-            ...(videoScaleFilter ? ['-vf', videoScaleFilter] : []),
+            ...(combinedVideoFilterStr ? ['-vf', combinedVideoFilterStr] : []),
             '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-crf', '22',
@@ -265,7 +374,7 @@ export async function exportVideoWithFfmpegWasm(
           percent: 50,
           memfsAllocatedMb: inputSizeMb,
         });
-        const noSubComplex = generateFfmpegFilterComplex(segments, { videoScaleFilter });
+        const noSubComplex = generateFfmpegFilterComplex(segments, { videoScaleFilter: combinedVideoFilterStr || undefined });
         try {
           const retryArgs = [
             '-i', inputFileName,
@@ -526,6 +635,8 @@ export async function exportCompositionWithFfmpegWasm(
       memfsAllocatedMb: totalInputMb,
     });
 
+    const customVideoFilters = buildExportVideoFilters(options, totalDuration);
+    const hasCustomVideoStyling = customVideoFilters.length > 0;
     let execSuccess = false;
 
     if (ext === 'mp3') {
@@ -598,7 +709,9 @@ export async function exportCompositionWithFfmpegWasm(
         percent: 45,
         memfsAllocatedMb: totalInputMb,
       });
-      const gifFilter = videoScaleFilter ? `${videoScaleFilter},fps=12` : 'fps=12,scale=480:-1:flags=lanczos';
+      const gifFilter = customVideoFilters.length > 0
+        ? `${customVideoFilters.join(',')},fps=12`
+        : (videoScaleFilter ? `${videoScaleFilter},fps=12` : 'fps=12,scale=480:-1:flags=lanczos');
       const exitCode = await ffmpeg.exec([
         '-f', 'concat',
         '-safe', '0',
@@ -613,8 +726,8 @@ export async function exportCompositionWithFfmpegWasm(
         percent: 45,
         memfsAllocatedMb: totalInputMb,
       });
-      const webmFilters: string[] = [];
-      if (videoScaleFilter) webmFilters.push(videoScaleFilter);
+      const webmFilters: string[] = [...customVideoFilters];
+      if (subFileName) webmFilters.push(`ass=${subFileName}`);
       const vfArgs = webmFilters.length > 0 ? ['-vf', webmFilters.join(',')] : [];
       const exitCode = await ffmpeg.exec([
         '-f', 'concat',
@@ -629,7 +742,7 @@ export async function exportCompositionWithFfmpegWasm(
       if (exitCode === 0) execSuccess = true;
     } else {
       // MP4 or MOV
-      if (!videoScaleFilter && !subFileName && bgAudioFiles.length === 0 && ext === 'mp4' && options.mode === 'stream-copy') {
+      if (!hasCustomVideoStyling && !subFileName && bgAudioFiles.length === 0 && ext === 'mp4' && options.mode === 'stream-copy') {
         try {
           const exitCode = await ffmpeg.exec([
             '-f', 'concat',
@@ -647,21 +760,21 @@ export async function exportCompositionWithFfmpegWasm(
 
       if (!execSuccess) {
         onProgress?.({
-          stage: 'Re-encoding full timeline composition with resolution scaling & audio/video sync...',
+          stage: 'Re-encoding full timeline composition with transitions, filters & subtitle burn-in...',
           percent: 60,
           memfsAllocatedMb: totalInputMb,
         });
 
-        // BUG-04 & BUG-03: Assemble filter_complex for both video filter/subtitles and background audio mixing
+        // Assemble filter_complex for video filters, subtitles, and background audio mixing
         const inputArgs: string[] = ['-f', 'concat', '-safe', '0', '-i', manifestName];
         for (const bg of bgAudioFiles) inputArgs.push('-i', bg.fileName);
 
         const filterChains: string[] = [];
         let videoMap = '0:v';
-        if (videoScaleFilter || subFileName) {
-          const vfParts: string[] = [];
-          if (videoScaleFilter) vfParts.push(videoScaleFilter);
-          if (subFileName) vfParts.push(`ass=${subFileName}`);
+        const vfParts: string[] = [...customVideoFilters];
+        if (subFileName) vfParts.push(`ass=${subFileName}`);
+
+        if (vfParts.length > 0) {
           filterChains.push(`[0:v]${vfParts.join(',')}[vout]`);
           videoMap = '[vout]';
         }
@@ -704,13 +817,13 @@ export async function exportCompositionWithFfmpegWasm(
           console.warn('[WASM Exporter] Composition encode with subtitles/audio mix failed, retrying scale-only:', err);
         }
 
-        if (!execSuccess && subFileName && videoScaleFilter) {
+        if (!execSuccess && customVideoFilters.length > 0) {
           try {
             const retryCode = await ffmpeg.exec([
               '-f', 'concat',
               '-safe', '0',
               '-i', manifestName,
-              '-vf', videoScaleFilter,
+              '-vf', customVideoFilters.join(','),
               '-c:v', 'libx264',
               '-preset', 'ultrafast',
               '-crf', '23',

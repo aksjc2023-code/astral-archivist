@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { WordToken, MediaAsset } from '@astral/core';
 import { ScarletButton } from '../common/ScarletButton';
 import { IconLightning, IconSparkles } from '../common/ScarletIcons';
@@ -62,12 +62,36 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
     ? tokens.filter(t => t.text.toLowerCase().includes(searchQuery.trim().toLowerCase()))
     : [];
 
-  const activeToken = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
-  const deletedTokens = tokens.filter(t => t.deleted);
+  // Throttle active token evaluation to ~10Hz (every 100ms) instead of 60Hz to prevent 60fps React re-render thrashing
+  const [activeTokenId, setActiveTokenId] = useState<string | null>(null);
+  const lastActiveCheckTimeRef = useRef(0);
+
+  useEffect(() => {
+    const now = performance.now();
+    // Throttle checks during high-frequency playback updates to 100ms
+    if (now - lastActiveCheckTimeRef.current < 100) {
+      return;
+    }
+    lastActiveCheckTimeRef.current = now;
+
+    const match = tokens.find(t => !t.deleted && currentTime >= t.start && currentTime <= t.end);
+    const newId = match ? match.id : null;
+    setActiveTokenId(prev => prev === newId ? prev : newId);
+  }, [currentTime, tokens]);
+
+  const activeToken = useMemo(() => {
+    if (!activeTokenId) return null;
+    return tokens.find(t => t.id === activeTokenId && !t.deleted) ?? null;
+  }, [activeTokenId, tokens]);
+
+  const deletedTokens = useMemo(() => tokens.filter(t => t.deleted), [tokens]);
   const deletedCount = deletedTokens.length;
-  const deletedDurationSec = deletedTokens.reduce((sum, t) => sum + Math.max(0, t.end - t.start), 0);
-  const fillerCount = tokens.filter(t => t.isFiller || t.isPause).length;
-  const discourseCount = tokens.filter(t => t.isDiscourseMarker && !t.isFiller).length;
+  const deletedDurationSec = useMemo(
+    () => deletedTokens.reduce((sum: number, t: WordToken) => sum + Math.max(0, t.end - t.start), 0),
+    [deletedTokens]
+  );
+  const fillerCount = useMemo(() => tokens.filter(t => t.isFiller || t.isPause).length, [tokens]);
+  const discourseCount = useMemo(() => tokens.filter(t => t.isDiscourseMarker && !t.isFiller).length, [tokens]);
 
   // Mouse Drag-to-Select State (Page 2 & Whisper text-editor precision)
   const [isMouseSelecting, setIsMouseSelecting] = useState(false);
@@ -423,18 +447,6 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-          {onFastGenerateTranscript && (
-            <ScarletButton
-              id="btn-fast-generate-tokens"
-              variant="secondary"
-              size="sm"
-              icon={<IconLightning size={13} color="#FFA502" />}
-              onClick={() => onFastGenerateTranscript(activeMediaId ?? 'asset_1')}
-              title="Instantly generate mock speech tokens for this clip"
-            >
-              Fast Generate Tokens
-            </ScarletButton>
-          )}
 
           {onTranscribeCurrentMedia && (
             <ScarletButton
@@ -481,20 +493,6 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           >
             Purge Fillers &amp; Pauses ({fillerCount})
           </ScarletButton>
-
-          {onSummarizeKeyPoints && tokens.length > 8 && (
-            <ScarletButton
-              id="btn-auto-summarize"
-              variant="additional-v2"
-              size="sm"
-              icon={<IconSparkles size={14} color="#00F0FF" />}
-              onClick={onSummarizeKeyPoints}
-              style={{ color: '#00F0FF', borderColor: '#00F0FF' }}
-              title="Automatically cut transcript down to key highlights using local TF-IDF ranking"
-            >
-              ✂️ Auto-Summarize Highlights
-            </ScarletButton>
-          )}
         </div>
       </div>
 
@@ -708,16 +706,6 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
                 {isTranscribing ? 'Transcribing with Whisper...' : 'Transcribe with WebGPU Whisper'}
               </ScarletButton>
             )}
-            {onFastGenerateTranscript && (
-              <ScarletButton
-                variant="secondary"
-                size="sm"
-                icon={<IconLightning size={14} color="#FFA502" />}
-                onClick={() => onFastGenerateTranscript(activeMediaId ?? 'asset_1')}
-              >
-                Load Demo Dummy Transcript
-              </ScarletButton>
-            )}
           </div>
         </div>
       )}
@@ -805,35 +793,44 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
 
           // Synthetic Silence Pause Token
           if (token.isPause) {
+            const pauseDuration = Math.max(0, token.end - token.start);
+            const pauseLabel = `⏸ ${pauseDuration.toFixed(1)}s`;
             return (
               <span
                 key={token.id}
                 id={`word-token-${token.id}`}
                 data-testid={`word-token-${token.id}`}
-                data-token-text={token.text}
+                data-token-text={pauseLabel}
                 onClick={(e) => {
                   e.stopPropagation();
                   onToggleDeleteToken(token.id);
+                  setSelectedTokenIds(new Set([token.id]));
+                  lastSelectedIdRef.current = token.id;
                 }}
-                title={isDeleted ? 'Cut silence pause (Click to restore)' : 'Click or Backspace to cut silence pause'}
+                onMouseDown={e => handleTokenMouseDown(token, e)}
+                onMouseEnter={() => handleTokenMouseEnter(token)}
+                title={isDeleted ? 'Cut silence pause (Click to restore)' : 'Silence pause (Click to toggle cut, or select & Backspace)'}
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
                   fontSize: '11px',
                   fontFamily: "'JetBrains Mono', monospace",
-                  backgroundColor: isDeleted ? 'rgba(255, 71, 87, 0.15)' : 'rgba(112, 161, 255, 0.15)',
-                  color: isDeleted ? '#FF4757' : '#70A1FF',
-                  border: isDeleted ? '1px dashed #FF4757' : '1px solid #3B4250',
+                  fontWeight: 500,
+                  backgroundColor: isDeleted ? 'rgba(239, 68, 68, 0.2)' : '#27272a',
+                  color: isDeleted ? '#f87171' : '#a1a1aa',
+                  border: isDeleted ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(255, 255, 255, 0.1)',
                   textDecoration: isDeleted ? 'line-through' : 'none',
-                  borderRadius: '6px',
-                  padding: '1px 8px',
+                  borderRadius: '9999px',
+                  padding: '2px 8px',
                   margin: '0 4px',
                   cursor: 'pointer',
-                  opacity: isDeleted ? 0.4 : 0.9,
+                  opacity: isDeleted ? 0.6 : 0.95,
+                  boxShadow: isSelected ? '0 0 0 2px #168BFF' : 'none',
                   transition: 'all 0.12s ease',
+                  userSelect: 'none',
                 }}
               >
-                ⏱ {token.text}
+                {pauseLabel}
               </span>
             );
           }

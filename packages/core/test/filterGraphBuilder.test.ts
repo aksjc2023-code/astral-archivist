@@ -11,6 +11,9 @@ import {
   computeAudioDuckingGain,
   synthesizeOverdubWavBytes,
   summarizeTranscriptTokens,
+  calculateSkipRanges,
+  computeKeepRanges,
+  buildTrimConcatFilter,
   WordToken,
   PlaybackSegment,
   asSourceSeconds,
@@ -131,4 +134,63 @@ test('5. Vocal purifier DSP, WAV RIFF TTS overdubbing, and TF-IDF summarizer ope
   ], 1);
   assert.equal(summary.length, 1);
   assert.equal(summary[0], 'ScarletCut enables instant editing.');
+});
+
+test('6. calculateSkipRanges returns empty for unedited words and merges contiguous deleted ranges', () => {
+  const uneditedTokens: WordToken[] = [
+    { id: 'w1', text: 'Welcome', start: asSourceSeconds(0.0), end: asSourceSeconds(0.5), deleted: false },
+    { id: 'w2', text: 'to', start: asSourceSeconds(0.8), end: asSourceSeconds(1.0), deleted: false },
+    { id: 'w3', text: 'Webster', start: asSourceSeconds(1.4), end: asSourceSeconds(2.0), deleted: false },
+  ];
+  // Natural pauses between words (>85ms) must NOT produce skip ranges when unedited!
+  assert.deepEqual(calculateSkipRanges(uneditedTokens), []);
+
+  const editedTokens: WordToken[] = [
+    { id: 'w1', text: 'Welcome', start: asSourceSeconds(0.0), end: asSourceSeconds(0.5), deleted: false },
+    { id: 'w2', text: 'um', start: asSourceSeconds(0.8), end: asSourceSeconds(1.1), deleted: true },
+    { id: 'w3', text: 'uh', start: asSourceSeconds(1.12), end: asSourceSeconds(1.4), deleted: true }, // within 40ms -> coalesces!
+    { id: 'w4', text: 'Webster', start: asSourceSeconds(2.0), end: asSourceSeconds(2.5), deleted: false },
+    { id: 'w5', text: 'again', start: asSourceSeconds(3.0), end: asSourceSeconds(3.5), deleted: true },
+  ];
+  const skips = calculateSkipRanges(editedTokens);
+  assert.equal(skips.length, 2);
+  assert.deepEqual(skips[0], { start: 0.8, end: 1.4 });
+  assert.deepEqual(skips[1], { start: 3.0, end: 3.5 });
+});
+
+test('7. computeKeepRanges computes the complement of skip ranges with sliver filtering', () => {
+  const totalDuration = 10.0;
+  // If no skips, keeps the entire duration
+  assert.deepEqual(computeKeepRanges(totalDuration, []), [{ start: 0, end: 10 }]);
+
+  // Skips at [2.0, 4.0] and [7.0, 8.5]
+  const skips = [
+    { start: 2.0, end: 4.0 },
+    { start: 7.0, end: 8.5 },
+  ];
+  const keeps = computeKeepRanges(totalDuration, skips);
+  assert.equal(keeps.length, 3);
+  assert.deepEqual(keeps[0], { start: 0, end: 2.0 });
+  assert.deepEqual(keeps[1], { start: 4.0, end: 7.0 });
+  assert.deepEqual(keeps[2], { start: 8.5, end: 10.0 });
+});
+
+test('8. buildTrimConcatFilter generates valid filter_complex with PTS-STARTPTS concat', () => {
+  const singleRange = [{ start: 1.5, end: 5.5 }];
+  const singleFilter = buildTrimConcatFilter(singleRange);
+  assert.ok(singleFilter.filterComplex.includes('[0:v]trim=start=1.5:end=5.5,setpts=PTS-STARTPTS[v]'));
+  assert.ok(singleFilter.filterComplex.includes('[0:a]atrim=start=1.5:end=5.5,asetpts=PTS-STARTPTS[a]'));
+  assert.deepEqual(singleFilter.outputMap, ['-map', '[v]', '-map', '[a]']);
+
+  const multiRange = [
+    { start: 0.0, end: 2.0 },
+    { start: 4.0, end: 7.0 },
+  ];
+  const multiFilter = buildTrimConcatFilter(multiRange);
+  assert.ok(multiFilter.filterComplex.includes('[0:v]trim=start=0:end=2,setpts=PTS-STARTPTS[v0];'));
+  assert.ok(multiFilter.filterComplex.includes('[0:a]atrim=start=0:end=2,asetpts=PTS-STARTPTS[a0];'));
+  assert.ok(multiFilter.filterComplex.includes('[0:v]trim=start=4:end=7,setpts=PTS-STARTPTS[v1];'));
+  assert.ok(multiFilter.filterComplex.includes('[0:a]atrim=start=4:end=7,asetpts=PTS-STARTPTS[a1];'));
+  assert.ok(multiFilter.filterComplex.includes('[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]'));
+  assert.deepEqual(multiFilter.outputMap, ['-map', '[outv]', '-map', '[outa]']);
 });

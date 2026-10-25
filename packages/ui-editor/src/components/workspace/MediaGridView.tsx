@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { MediaAsset } from '@astral/core';
-import { IconSearch, IconFilterFunnel, IconCheckmark } from '../common/ScarletIcons';
+import { IconSearch, IconFilterFunnel, IconCheckmark, IconTrash } from '../common/ScarletIcons';
 
 export interface MediaGridViewProps {
   assets: MediaAsset[];
   onSelectAsset: (asset: MediaAsset) => void;
   onAddToTimeline: (asset: MediaAsset) => void;
+  onDeleteAsset?: (asset: MediaAsset) => void;
   /** External category filter from sub-nav (e.g. Landscape, Nature, Sample video) */
   categoryFilter?: string | null;
   title?: string;
@@ -15,6 +16,7 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
   assets,
   onSelectAsset,
   onAddToTimeline,
+  onDeleteAsset,
   categoryFilter = null,
   title = 'My Files',
 }) => {
@@ -237,34 +239,73 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
                 <span id={`meta-res-${asset.id}`}>{asset.resolution ?? '1080p'}</span>
                 <span id={`meta-dur-${asset.id}`}>{Math.floor(asset.duration)}s</span>
               </div>
-              <button
-                id={`btn-add-timeline-${asset.id}`}
-                data-testid={`btn-add-timeline-${asset.id}`}
-                data-asset-name={asset.name}
-                type="button"
-                onClick={e => {
-                  e.stopPropagation();
-                  onAddToTimeline(asset);
-                }}
-                title="Add to Timeline"
-                style={{
-                  marginTop: '6px',
-                  width: '100%',
-                  backgroundColor: '#168BFF',
-                  color: '#FFFFFF',
-                  border: 'none',
-                  borderRadius: '6px',
-                  padding: '4px 0',
-                  fontSize: '11px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  transition: 'background-color 0.12s ease',
-                }}
-                onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#329AFF')}
-                onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#168BFF')}
-              >
-                + Add to Timeline
-              </button>
+              <div style={{ display: 'flex', gap: '6px', marginTop: '6px' }}>
+                <button
+                  id={`btn-add-timeline-${asset.id}`}
+                  data-testid={`btn-add-timeline-${asset.id}`}
+                  data-asset-name={asset.name}
+                  type="button"
+                  onClick={e => {
+                    e.stopPropagation();
+                    onAddToTimeline(asset);
+                  }}
+                  title="Add to Timeline"
+                  style={{
+                    flex: 1,
+                    backgroundColor: '#168BFF',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: '6px',
+                    padding: '5px 0',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'background-color 0.12s ease',
+                  }}
+                  onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#329AFF')}
+                  onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = '#168BFF')}
+                >
+                  + Add
+                </button>
+
+                {onDeleteAsset && (
+                  <button
+                    id={`btn-delete-asset-${asset.id}`}
+                    data-testid={`btn-delete-asset-${asset.id}`}
+                    type="button"
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (window.confirm(`Remove "${asset.name}" from project files?`)) {
+                        onDeleteAsset(asset);
+                      }
+                    }}
+                    title="Remove file from project"
+                    style={{
+                      width: '28px',
+                      height: '28px',
+                      backgroundColor: 'rgba(235, 59, 90, 0.15)',
+                      color: '#FF6B81',
+                      border: '1px solid rgba(235, 59, 90, 0.3)',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      transition: 'all 0.12s ease',
+                    }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor = '#EB3B5A';
+                      (e.currentTarget as HTMLElement).style.color = '#FFFFFF';
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(235, 59, 90, 0.15)';
+                      (e.currentTarget as HTMLElement).style.color = '#FF6B81';
+                    }}
+                  >
+                    <IconTrash size={13} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}

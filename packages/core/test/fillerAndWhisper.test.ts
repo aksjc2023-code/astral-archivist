@@ -50,10 +50,10 @@ test('2. Hard fillers vs discourse markers and multi-word phrase matching', () =
   assert.equal(tagged[5]?.isFiller, undefined);
 });
 
-test('3. Pause tokens inject 120ms acoustic breathing room and enforce strict mediaId', () => {
+test('3. Non-destructive pause tokens match exact silence duration and enforce strict mediaId', () => {
   const tokens: WordToken[] = [
     { id: '1', text: 'Hello', start: asSourceSeconds(0.0), end: asSourceSeconds(1.0), deleted: false, mediaId: 'asset_1' },
-    // 1.0s gap between 1.0 and 2.0 -> with 120ms breathing room, pause is [1.12, 1.88] (duration 0.76s)
+    // 1.0s gap between 1.0 and 2.0 -> non-destructive pause token is [1.0, 2.0] (duration 1.0s)
     { id: '2', text: 'World', start: asSourceSeconds(2.0), end: asSourceSeconds(2.8), deleted: false, mediaId: 'asset_1' },
     // Token on DIFFERENT media asset: must NOT inject pause across asset boundary!
     { id: '3', text: 'Cut', start: asSourceSeconds(4.0), end: asSourceSeconds(4.5), deleted: false, mediaId: 'asset_2' },
@@ -64,14 +64,22 @@ test('3. Pause tokens inject 120ms acoustic breathing room and enforce strict me
 
   const pauseTok = result[1];
   assert.equal(pauseTok?.isPause, true);
+  assert.equal(pauseTok?.deleted, false);
   assert.equal(pauseTok?.mediaId, 'asset_1');
-  assert.equal(pauseTok?.start, 1.12);
-  assert.equal(pauseTok?.end, 1.88);
-  assert.equal(Number((pauseTok?.end - pauseTok?.start).toFixed(2)), 0.76);
-  assert.equal(pauseTok?.text, '[0.76s pause]');
+  assert.equal(pauseTok?.start, 1.0);
+  assert.equal(pauseTok?.end, 2.0);
+  assert.equal(Number((pauseTok?.end - pauseTok?.start).toFixed(2)), 1.0);
+  assert.equal(pauseTok?.text, '⏸ 1.0s');
 
   // Verify no pause between World (asset_1) and Cut (asset_2)
   assert.equal(result[3]?.id, '3');
+
+  // Verify custom edgePaddingSec when explicitly supplied
+  const paddedResult = injectSyntheticPauseTokens(tokens, 0.5, 0.12);
+  const paddedTok = paddedResult[1];
+  assert.equal(paddedTok?.start, 1.12);
+  assert.equal(paddedTok?.end, 1.88);
+  assert.equal(Number((paddedTok?.end - paddedTok?.start).toFixed(2)), 0.76);
 });
 
 test('4. Purge options protect discourse markers by default and compute exact savings', () => {

@@ -5,6 +5,7 @@ import {
   getNextValidTime,
   sourceToVirtualTime,
   virtualToSourceTime,
+  rippleCutTimeRange,
   EPSILON_MERGE_SEC,
   MIN_SEGMENT_DURATION_SEC,
   TIME_EPSILON_SEC,
@@ -233,4 +234,199 @@ test('8. Asset-scoped ripple segments isolates cuts per media asset', () => {
   assert.equal(resGlobal.segments[1]?.sourceStart, 10);
   assert.equal(resGlobal.segments[1]?.sourceEnd, 12);
 });
+
+test('9. Non-deleted pauses coalesce into continuous playback without seek jumps', () => {
+  const tokensWithPauses: WordToken[] = [
+    { id: 'w1', text: 'Singing', start: asSourceSeconds(0.0), end: asSourceSeconds(1.5), deleted: false },
+    // 3.0s instrumental guitar beat / pause (non-deleted by default)
+    { id: 'p1', text: '⏸ 3.0s', start: asSourceSeconds(1.5), end: asSourceSeconds(4.5), deleted: false, isPause: true },
+    { id: 'w2', text: 'Chorus', start: asSourceSeconds(4.5), end: asSourceSeconds(6.0), deleted: false },
+  ];
+
+  // Continuous playback: non-deleted pause coalesces seamlessly into 1 continuous segment
+  const result = buildPlaybackSegments(tokensWithPauses);
+  assert.equal(result.segments.length, 1);
+  assert.equal(result.segments[0]?.sourceStart, 0.0);
+  assert.equal(result.segments[0]?.sourceEnd, 6.0);
+  assert.equal(result.segments[0]?.duration, 6.0);
+  assert.equal(result.totalVirtualDuration, 6.0);
+  assert.equal(result.timeSavedSec, 0.0);
+
+  // Video player playing at 3.0s (in the middle of the pause) should NOT jump
+  const jumpInfo = getNextValidTime(asSourceSeconds(3.0), result.segments);
+  assert.equal(jumpInfo.nextTime, 3.0); // Continuous, no jump!
+  assert.equal(jumpInfo.didJump, false);
+});
+
+test('10. Marking pause as deleted performs virtual ripple cut across the silence', () => {
+  const tokensWithCutPause: WordToken[] = [
+    { id: 'w1', text: 'Singing', start: asSourceSeconds(0.0), end: asSourceSeconds(1.5), deleted: false },
+    // Pause explicitly marked deleted by user (e.g. clicked or Backspace)
+    { id: 'p1', text: '⏸ 3.0s', start: asSourceSeconds(1.5), end: asSourceSeconds(4.5), deleted: true, isPause: true },
+    { id: 'w2', text: 'Chorus', start: asSourceSeconds(4.5), end: asSourceSeconds(6.0), deleted: false },
+  ];
+
+  const result = buildPlaybackSegments(tokensWithCutPause);
+  assert.equal(result.segments.length, 2);
+  // Segment 1: [0.0, 1.5]
+  assert.equal(result.segments[0]?.sourceStart, 0.0);
+  assert.equal(result.segments[0]?.sourceEnd, 1.5);
+  // Segment 2: [4.5, 6.0]
+  assert.equal(result.segments[1]?.sourceStart, 4.5);
+  assert.equal(result.segments[1]?.sourceEnd, 6.0);
+
+  assert.equal(result.totalVirtualDuration, 3.0);
+  assert.equal(result.totalSourceDuration, 6.0);
+  assert.equal(result.timeSavedSec, 3.0);
+
+  // Video player hitting 2.0s should jump to 4.5s
+  const jumpInfo = getNextValidTime(asSourceSeconds(2.0), result.segments);
+  assert.equal(jumpInfo.nextTime, 4.5);
+  assert.equal(jumpInfo.didJump, true);
+});
+
+test('11. Synthetic overlay clips (effects, filters, transitions, titles) allow stretching without crash', () => {
+  // Stretched filter clip whose duration expanded from 2s to 6s
+  const stretchedFilter: TimelineClip = {
+    id: 'eff_1',
+    trackId: 'track_effects',
+    title: '⚡ Cyberpunk',
+    timelineStart: asTimelineSeconds(1.0),
+    timelineDuration: asSeconds(6.0),
+    sourceIn: asSourceSeconds(0),
+    sourceOut: asSourceSeconds(6.0),
+    color: '#EB3B5A',
+  };
+
+  // Must not throw despite source range being synthetic
+  assert.doesNotThrow(() => validateTimelineClip(stretchedFilter));
+
+  const stretchedTitle: TimelineClip = {
+    id: 'title_1',
+    trackId: 'track_title',
+    title: 'Cinematic Title',
+    timelineStart: asTimelineSeconds(0.5),
+    timelineDuration: asSeconds(7.5),
+    color: '#8854D0',
+  };
+
+  assert.doesNotThrow(() => validateTimelineClip(stretchedTitle));
+});
+
+test('12. rippleCutTimeRange splits mid-clip chunk, trims head/tail, drops enclosed, and ripples trailing clips', () => {
+  const clips: TimelineClip[] = [
+    {
+      id: 'clip_before',
+      trackId: 'track_video',
+      title: 'Before Clip',
+      timelineStart: asTimelineSeconds(0.0),
+      timelineDuration: asSeconds(2.0),
+      sourceIn: asSourceSeconds(0.0),
+      sourceOut: asSourceSeconds(2.0),
+      color: '#4B6584',
+    },
+    {
+      id: 'clip_target',
+      trackId: 'track_video',
+      title: 'Target Clip',
+      timelineStart: asTimelineSeconds(2.0),
+      timelineDuration: asSeconds(8.0), // 2.0 -> 10.0
+      sourceIn: asSourceSeconds(5.0),
+      sourceOut: asSourceSeconds(13.0),
+      color: '#4B6584',
+    },
+    {
+      id: 'clip_trailing',
+      trackId: 'track_video',
+      title: 'Trailing Clip',
+      timelineStart: asTimelineSeconds(10.0),
+      timelineDuration: asSeconds(4.0), // 10.0 -> 14.0
+      sourceIn: asSourceSeconds(0.0),
+      sourceOut: asSourceSeconds(4.0),
+      color: '#4B6584',
+    },
+  ];
+
+  // Cut 4.0s -> 6.0s (a 2.0s slice inside clip_target)
+  const cutResult = rippleCutTimeRange(clips, 4.0, 6.0);
+
+  // clip_before: 0.0 -> 2.0 (untouched)
+  // clip_target: spliced into part1 (2.0 -> 4.0, dur 2.0, sourceIn 5.0, sourceOut 7.0)
+  //              and part2 (4.0 -> 6.0, dur 4.0, sourceIn 5.0 + 4.0 = 9.0, sourceOut 13.0)
+  // clip_trailing: rippled backward by 2.0s -> starts at 8.0s, ends at 12.0s
+  assert.equal(cutResult.length, 4);
+
+  const before = cutResult[0]!;
+  assert.equal(before.id, 'clip_before');
+  assert.equal(before.timelineStart, 0.0);
+  assert.equal(before.timelineDuration, 2.0);
+
+  const part1 = cutResult[1]!;
+  assert.equal(part1.timelineStart, 2.0);
+  assert.equal(part1.timelineDuration, 2.0);
+  assert.equal(part1.sourceIn, 5.0);
+  assert.equal(part1.sourceOut, 7.0);
+
+  const part2 = cutResult[2]!;
+  assert.equal(part2.timelineStart, 4.0);
+  assert.equal(part2.timelineDuration, 4.0);
+  assert.equal(part2.sourceIn, 9.0);
+  assert.equal(part2.sourceOut, 13.0);
+
+  const trailing = cutResult[3]!;
+  assert.equal(trailing.id, 'clip_trailing');
+  assert.equal(trailing.timelineStart, 8.0);
+  assert.equal(trailing.timelineDuration, 4.0);
+  assert.equal(trailing.sourceIn, 0.0);
+  assert.equal(trailing.sourceOut, 4.0);
+
+  // Validate all generated clips against domain validator
+  for (const c of cutResult) {
+    assert.doesNotThrow(() => validateTimelineClip(c));
+  }
+});
+
+test('13. rippleCutTimeRange respects locked tracks', () => {
+  const clips: TimelineClip[] = [
+    {
+      id: 'clip_video',
+      trackId: 'track_video',
+      title: 'Video',
+      timelineStart: asTimelineSeconds(0.0),
+      timelineDuration: asSeconds(10.0),
+      sourceIn: asSourceSeconds(0.0),
+      sourceOut: asSourceSeconds(10.0),
+      color: '#4B6584',
+    },
+    {
+      id: 'clip_music',
+      trackId: 'track_audio',
+      title: 'Music (Locked)',
+      timelineStart: asTimelineSeconds(0.0),
+      timelineDuration: asSeconds(10.0),
+      sourceIn: asSourceSeconds(0.0),
+      sourceOut: asSourceSeconds(10.0),
+      color: '#10AC84',
+    },
+  ];
+
+  const result = rippleCutTimeRange(clips, 2.0, 5.0, {
+    isTrackLocked: (trackId) => trackId === 'track_audio',
+  });
+
+  // track_audio must remain completely untouched
+  const music = result.find(c => c.trackId === 'track_audio');
+  assert.ok(music);
+  assert.equal(music.timelineStart, 0.0);
+  assert.equal(music.timelineDuration, 10.0);
+
+  // track_video was sliced into 2 parts
+  const videoParts = result.filter(c => c.trackId === 'track_video');
+  assert.equal(videoParts.length, 2);
+  assert.equal(videoParts[0]!.timelineDuration, 2.0);
+  assert.equal(videoParts[1]!.timelineDuration, 5.0);
+});
+
+
+
 

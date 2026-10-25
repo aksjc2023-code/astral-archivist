@@ -23,6 +23,8 @@ pnpm-debug.log*
 .turbo/
 .cache/
 coverage/
+.gravitas/
+.opencode/
 
 # Specific request: do not commit the master prompt/plan files
 Master Engineering Plan.md

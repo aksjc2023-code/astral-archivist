@@ -81,7 +81,7 @@ export function tagLexicalFillers(tokens: WordToken[]): WordToken[] {
 export function injectSyntheticPauseTokens(
   tokens: WordToken[],
   minPauseDurationSec = MIN_PAUSE_DURATION_SEC,
-  edgePaddingSec = PAUSE_EDGE_PADDING_SEC
+  edgePaddingSec = 0
 ): WordToken[] {
   const result: WordToken[] = [];
   let pauseCounter = 1;
@@ -97,23 +97,39 @@ export function injectSyntheticPauseTokens(
       if (prev && prev.mediaId === current.mediaId) {
         const rawGap = current.start - prev.end;
         if (rawGap >= minPauseDurationSec) {
-          // Acoustic breathing room: keep edgePaddingSec after prev and before current
-          const paddedStart = prev.end + edgePaddingSec;
-          const paddedEnd = current.start - edgePaddingSec;
-          const cuttableDuration = paddedEnd - paddedStart;
+          // Acoustic breathing room if edgePaddingSec is explicitly provided, otherwise exact silence duration
+          const pauseStart = edgePaddingSec > 0 ? prev.end + edgePaddingSec : prev.end;
+          const pauseEnd = edgePaddingSec > 0 ? current.start - edgePaddingSec : current.start;
+          const cuttableDuration = pauseEnd - pauseStart;
 
-          if (cuttableDuration >= 0.15) {
+          if (cuttableDuration >= 0.15 || edgePaddingSec === 0) {
             result.push({
               id: `pause_${current.mediaId ? `${current.mediaId}_` : ''}${pauseCounter++}`,
-              text: `[${cuttableDuration.toFixed(2)}s pause]`,
-              start: asSourceSeconds(Number(paddedStart.toFixed(3))),
-              end: asSourceSeconds(Number(paddedEnd.toFixed(3))),
+              text: `⏸ ${rawGap.toFixed(1)}s`,
+              start: asSourceSeconds(Number(pauseStart.toFixed(3))),
+              end: asSourceSeconds(Number(pauseEnd.toFixed(3))),
               deleted: false,
               isPause: true,
               mediaId: current.mediaId,
             });
           }
         }
+      }
+    } else if (i === 0 && current.start >= minPauseDurationSec) {
+      // Intro silence before first spoken token
+      const rawGap = current.start;
+      const pauseStart = 0;
+      const pauseEnd = edgePaddingSec > 0 ? current.start - edgePaddingSec : current.start;
+      if (pauseEnd > pauseStart) {
+        result.push({
+          id: `pause_${current.mediaId ? `${current.mediaId}_` : ''}${pauseCounter++}`,
+          text: `⏸ ${rawGap.toFixed(1)}s`,
+          start: asSourceSeconds(Number(pauseStart.toFixed(3))),
+          end: asSourceSeconds(Number(pauseEnd.toFixed(3))),
+          deleted: false,
+          isPause: true,
+          mediaId: current.mediaId,
+        });
       }
     }
 

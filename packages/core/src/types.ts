@@ -20,6 +20,11 @@ export const asSeconds = (s: number): Seconds => s as Seconds;
 
 export type AspectRatio = '16:9' | '9:16' | '1:1' | '4:5' | '21:9' | '4:3';
 
+export interface TimeRange {
+  start: number;
+  end: number;
+}
+
 export interface WordToken {
   id: string;
   mediaId?: string;           // Asset / source media ID this token belongs to
@@ -128,6 +133,20 @@ export function validateTimelineClip(clip: TimelineClip): void {
   }
   if (!Number.isFinite(dur) || dur <= 0) {
     throw new Error(`Invalid clip timelineDuration: ${dur}`);
+  }
+  // Synthetic overlay tracks (effects, filters, titles, stickers, transitions)
+  // do not have strict source media in/out constraints.
+  const isOverlayTrack =
+    clip.trackId === 'track_effects' ||
+    clip.trackId === 'track_title' ||
+    clip.trackId === 'track_stickers' ||
+    clip.trackId === 'track_transitions' ||
+    clip.trackId.startsWith('track_custom') ||
+    clip.title.startsWith('⚡ ') ||
+    clip.title.startsWith('⧉ ') ||
+    clip.title.startsWith('★ ');
+  if (isOverlayTrack) {
+    return;
   }
   if (clip.sourceIn !== undefined && (!Number.isFinite(clip.sourceIn) || clip.sourceIn < 0)) {
     throw new Error(`Invalid clip sourceIn: ${clip.sourceIn}`);
