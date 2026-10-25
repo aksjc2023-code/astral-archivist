@@ -444,26 +444,65 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
   const nonDeletedTokens = useMemo(() => tokens.filter(t => !t.deleted && !t.isPause), [tokens]);
   const activeToken = nonDeletedTokens.find(t => effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
 
-  // Group tokens into an aesthetic 4-8 word conversational subtitle block around the playhead
-  const currentSentenceTokens = useMemo(() => {
+  // Partition tokens into stable conversational subtitle blocks (clauses/sentences)
+  // so clicking or seeking to any word keeps the entire sentence intact with that word highlighted,
+  // instead of shifting the window start abruptly.
+  const subtitleChunks = useMemo(() => {
     if (nonDeletedTokens.length === 0) return [];
-    const activeIdx = nonDeletedTokens.findIndex(t => effectiveSourceTime >= t.start && effectiveSourceTime <= t.end);
-    if (activeIdx !== -1) {
-      // Find sentence start (either after punctuation or up to 4 words before)
-      let startIdx = activeIdx;
-      while (startIdx > 0 && activeIdx - startIdx < 4 && !/[.!?]$/.test(nonDeletedTokens[startIdx - 1]?.text ?? '')) {
-        startIdx--;
+    const chunks: WordToken[][] = [];
+    let current: WordToken[] = [];
+
+    for (let i = 0; i < nonDeletedTokens.length; i++) {
+      const tok = nonDeletedTokens[i]!;
+      current.push(tok);
+
+      const hasTerminalPunctuation = /[.!?]$/.test(tok.text.trim());
+      const nextTok = nonDeletedTokens[i + 1];
+      const hasPauseGap = nextTok ? nextTok.start - tok.end >= 0.55 : false;
+      const isMaxChunkSize = current.length >= 7;
+
+      if (hasTerminalPunctuation || hasPauseGap || isMaxChunkSize) {
+        chunks.push(current);
+        current = [];
       }
-      // Find sentence end (either terminal punctuation or up to 5 words after)
-      let endIdx = activeIdx;
-      while (endIdx < nonDeletedTokens.length - 1 && endIdx - activeIdx < 5 && !/[.!?]$/.test(nonDeletedTokens[endIdx]?.text ?? '')) {
-        endIdx++;
-      }
-      return nonDeletedTokens.slice(startIdx, endIdx + 1);
     }
-    // Fallback if playhead is in a micro-gap between words: show words within 1.8s
-    return nonDeletedTokens.filter(t => Math.abs(t.start - effectiveSourceTime) < 1.8).slice(0, 7);
-  }, [nonDeletedTokens, effectiveSourceTime]);
+    if (current.length > 0) {
+      chunks.push(current);
+    }
+    return chunks;
+  }, [nonDeletedTokens]);
+
+  // Live conversational subtitle block around the playhead
+  const currentSentenceTokens = useMemo(() => {
+    if (subtitleChunks.length === 0) return [];
+
+    // 1. Find chunk where the active word lives
+    const activeChunk = subtitleChunks.find(chunk =>
+      chunk.some(t => effectiveSourceTime >= t.start && effectiveSourceTime <= t.end)
+    );
+    if (activeChunk) return activeChunk;
+
+    // 2. Playhead between words or leading into a phrase: find closest span within 1.2s
+    const proximateChunk = subtitleChunks.find(chunk => {
+      const start = chunk[0]?.start ?? 0;
+      const end = chunk[chunk.length - 1]?.end ?? 0;
+      return effectiveSourceTime >= start - 0.4 && effectiveSourceTime <= end + 0.4;
+    });
+    if (proximateChunk) return proximateChunk;
+
+    // 3. Fallback: closest chunk by time
+    let closestChunk = subtitleChunks[0];
+    let minDistance = Infinity;
+    for (const chunk of subtitleChunks) {
+      const start = chunk[0]?.start ?? 0;
+      const dist = Math.abs(start - effectiveSourceTime);
+      if (dist < minDistance) {
+        minDistance = dist;
+        closestChunk = chunk;
+      }
+    }
+    return minDistance < 1.5 && closestChunk ? closestChunk : [];
+  }, [subtitleChunks, effectiveSourceTime]);
 
   const timecode = formatTimecode(currentTime);
 
@@ -545,8 +584,10 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
   }, [currentTime]);
 
-  // Safe drift tolerance deadband (120ms) - only seek when jumping across cuts, paused/scrubbing, or exceeding deadband
-  const SYNC_THRESHOLD_SECONDS = 0.12;
+  // Safe drift tolerance deadband: only seek if video has drifted significantly (>0.60s)
+  // or when explicitly jumping across a cut boundary or paused/scrubbing.
+  // This preserves smooth, uninterrupted original audio playback without micro-seek interruptions!
+  const SYNC_THRESHOLD_SECONDS = 0.60;
 
   // Sync mapped source time to HTML5 video element with seek serialization and boundary clamping
   useEffect(() => {
@@ -557,7 +598,7 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     const targetOffset = Math.max(0, Math.min(vidDuration, rawTarget));
     const timeDifference = Math.abs(v.currentTime - targetOffset);
 
-    // Case 1: When paused, or when jumping across a sliced clip boundary, force seek
+    // Case 1: When paused, scrubbing, or when jumping across a deleted word boundary, force seek
     if (!isPlaying || isAcrossCutBoundary) {
       if (timeDifference > 0.01) {
         requestVideoSeek(targetOffset);
@@ -566,8 +607,8 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
     }
 
     // Case 2: During normal continuous playback:
-    // ONLY seek if the video has drifted significantly away from timeline time (>120ms).
-    // NEVER overwrite video.currentTime if it is within the normal playback window to avoid decoder thrashing!
+    // ONLY seek if the video has drifted significantly (>600ms, e.g. user jumped timeline).
+    // NEVER overwrite video.currentTime if it is within normal playback tolerance so audio plays smoothly!
     if (timeDifference > SYNC_THRESHOLD_SECONDS) {
       requestVideoSeek(targetOffset);
     }
@@ -819,6 +860,17 @@ export const VideoPreviewMonitor: React.FC<VideoPreviewMonitorProps> = ({
                 opacity: isVideoTrackHidden ? 0 : ((toolSettings?.chromaKey?.opacity ?? 100) / 100),
                 visibility: isVideoTrackHidden ? 'hidden' : 'visible',
               }}
+            />
+          )}
+
+          {/* Background Audio Player for Track 3 */}
+          {backgroundAudioUrl && (
+            <audio
+              ref={audioRef}
+              id="preview-background-audio"
+              src={backgroundAudioUrl}
+              playsInline
+              style={{ display: 'none' }}
             />
           )}
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { WordToken, MediaAsset } from '@astral/core';
 import { ScarletButton } from '../common/ScarletButton';
-import { IconLightning, IconSparkles } from '../common/ScarletIcons';
+import { IconSparkles } from '../common/ScarletIcons';
+import { AutoCleanButton } from './AutoCleanButton';
 
 export interface TranscriptEditorViewProps {
   tokens: WordToken[];
@@ -11,7 +12,6 @@ export interface TranscriptEditorViewProps {
   onSelectMediaId?: (mediaId: string) => void;
   onToggleDeleteToken: (tokenId: string) => void;
   onToggleDeleteMultipleTokens?: (tokenIds: string[]) => void;
-  onPurgeFillers: () => void;
   onRestoreAllTokens: () => void;
   onEditTokenText?: (tokenId: string, newText: string) => void;
   onSeekToTime?: (time: number) => void;
@@ -24,6 +24,7 @@ export interface TranscriptEditorViewProps {
   transcriptionError?: string | null;
   onClearTranscriptionError?: () => void;
   onSummarizeKeyPoints?: () => void;
+  onAutoClean?: () => Promise<void>;
 }
 
 export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
@@ -34,7 +35,6 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   onSelectMediaId,
   onToggleDeleteToken,
   onToggleDeleteMultipleTokens,
-  onPurgeFillers,
   onRestoreAllTokens,
   onEditTokenText,
   onSeekToTime,
@@ -47,6 +47,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   transcriptionError,
   onClearTranscriptionError,
   onSummarizeKeyPoints,
+  onAutoClean,
 }) => {
   const [showMediaDropdown, setShowMediaDropdown] = useState(false);
   const activeAsset = mediaAssets?.find(a => a.id === activeMediaId);
@@ -90,8 +91,9 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
     () => deletedTokens.reduce((sum: number, t: WordToken) => sum + Math.max(0, t.end - t.start), 0),
     [deletedTokens]
   );
-  const fillerCount = useMemo(() => tokens.filter(t => t.isFiller || t.isPause).length, [tokens]);
+  const hardFillerCount = useMemo(() => tokens.filter(t => t.isFiller && !t.isPause).length, [tokens]);
   const discourseCount = useMemo(() => tokens.filter(t => t.isDiscourseMarker && !t.isFiller).length, [tokens]);
+  const pauseCount = useMemo(() => tokens.filter(t => t.isPause).length, [tokens]);
 
   // Mouse Drag-to-Select State (Page 2 & Whisper text-editor precision)
   const [isMouseSelecting, setIsMouseSelecting] = useState(false);
@@ -484,15 +486,12 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
             </ScarletButton>
           )}
 
-          <ScarletButton
-            id="btn-purge-fillers"
-            variant="additional-v1"
-            size="sm"
-            icon={<IconLightning size={14} color="#FFA502" />}
-            onClick={onPurgeFillers}
-          >
-            Purge Fillers &amp; Pauses ({fillerCount})
-          </ScarletButton>
+          {onAutoClean && (
+            <AutoCleanButton
+              wordCount={tokens.filter(t => !t.deleted).length}
+              onAutoClean={onAutoClean}
+            />
+          )}
         </div>
       </div>
 
@@ -655,7 +654,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ width: '8px', height: '8px', backgroundColor: '#FFA502', borderRadius: '50%' }} />
-          Hard Filler ({fillerCount - tokens.filter(t => t.isPause).length})
+          Hard Filler ({hardFillerCount})
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ width: '8px', height: '8px', backgroundColor: '#ECCC68', borderRadius: '50%' }} />
@@ -663,7 +662,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ width: '8px', height: '8px', backgroundColor: '#70A1FF', borderRadius: '50%' }} />
-          Silence Pause &gt;0.5s ({tokens.filter(t => t.isPause).length})
+          Silence Pause &gt;0.5s ({pauseCount})
         </span>
         <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
           <span style={{ width: '8px', height: '8px', backgroundColor: '#8854D0', borderRadius: '50%' }} />

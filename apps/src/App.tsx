@@ -23,7 +23,6 @@ import {
   timelineToSourceTime,
   sourceToTimelineTime,
   rippleCutTimeRange,
-  purgeFillersAndPauses,
   restoreAllTokens,
   validateWordToken,
   validateTimelineClip,
@@ -36,6 +35,7 @@ import {
   TitleClipData,
   FilterClipData,
   getSummarizedKeyTokenIds,
+  predictDisfluentIndices,
 } from '@astral/core';
 
 import {
@@ -620,16 +620,6 @@ export const App: React.FC = () => {
     });
   }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
-  // 1-Click Purge Fillers & Pauses (>0.5s)
-  const handlePurgeFillers = useCallback(() => {
-    pushHistory(tokensByMedia, clips);
-    setTokensByMedia(prev => {
-      const currentList = prev[activeTranscriptMediaId] ?? [];
-      const result = purgeFillersAndPauses(currentList);
-      return { ...prev, [activeTranscriptMediaId]: result.updatedTokens };
-    });
-  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
-
   // Restore all cut tokens
   const handleRestoreAll = useCallback(() => {
     pushHistory(tokensByMedia, clips);
@@ -656,6 +646,44 @@ export const App: React.FC = () => {
         };
       });
       return { ...prev, [activeTranscriptMediaId]: updated };
+    });
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
+
+  // LLM-Powered Auto-Clean: detect and soft-delete fumbles, stutters, fillers, and pauses
+  const handleAutoClean = useCallback(async () => {
+    const currentList = tokensByMedia[activeTranscriptMediaId] ?? [];
+    // Spoken tokens for LLM/heuristic disfluency analysis
+    const spokenTokens = currentList.filter(t => !t.deleted && !t.isPause);
+    // Active pause tokens (>0.5s silence gaps) to be automatically filtered
+    const activePauseTokens = currentList.filter(t => !t.deleted && t.isPause);
+
+    if (spokenTokens.length === 0 && activePauseTokens.length === 0) return;
+
+    let flaggedSpokenIds: string[] = [];
+    if (spokenTokens.length > 0) {
+      const flaggedIndices = await predictDisfluentIndices(spokenTokens);
+      flaggedSpokenIds = flaggedIndices
+        .map(idx => spokenTokens[idx]?.id)
+        .filter((id): id is string => id !== undefined);
+    }
+
+    // Combine disfluent word IDs and active pause IDs
+    const pauseIds = activePauseTokens.map(p => p.id);
+    const allIdsToDelete = Array.from(new Set([...flaggedSpokenIds, ...pauseIds]));
+
+    if (allIdsToDelete.length === 0) return;
+
+    pushHistory(tokensByMedia, clips);
+
+    const idSet = new Set(allIdsToDelete);
+    setTokensByMedia(prev => {
+      const list = prev[activeTranscriptMediaId] ?? [];
+      return {
+        ...prev,
+        [activeTranscriptMediaId]: list.map(t =>
+          idSet.has(t.id) ? { ...t, deleted: true } : t
+        ),
+      };
     });
   }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
 
@@ -1831,6 +1859,9 @@ export const App: React.FC = () => {
           rotationAngle,
           activeTransition: currentTransition,
           activeTransitionDuration: activeClip?.transitionDuration || 1.2,
+          activeTitle: activeTitleClip?.title,
+          activeTitleData,
+          activeSticker: activeStickerClip ? activeStickerClip.title.replace(/^★\s*/, '') : undefined,
           onProgress: p => {
             callbacks.onProgress(p.percent, p.stage, p.log);
             if (p.memfsAllocatedMb !== undefined) {
@@ -2079,15 +2110,19 @@ export const App: React.FC = () => {
 
           if (skipRanges.length > 0) {
             const sourcePos = timelineToSourceTime(targetTimeline, currentClip);
+            // Anticipatory lookahead margin (30ms / ~1-2 animation frames) prevents audio bleeding
+            // into deleted tokens before the next render frame can leap
+            const LOOKAHEAD_SEC = 0.030;
             for (const range of skipRanges) {
-              if (sourcePos >= range.start && sourcePos < range.end) {
+              if (sourcePos >= range.start - LOOKAHEAD_SEC && sourcePos < range.end) {
+                // Leap targetTimeline directly to range.end in source time
                 const leapSec = range.end - sourcePos;
-                rawNext = rawNext + leapSec;
+                rawNext = rawNext + Math.max(0, leapSec);
                 setIsAcrossCutBoundary(true);
-                setTimeout(() => setIsAcrossCutBoundary(false), 50);
+                setTimeout(() => setIsAcrossCutBoundary(false), 80);
                 setTelemetry(prev => ({
                   ...prev,
-                  recoveryLog: `[SKIP PLAYBACK] Smooth leap across deleted word range [${range.start.toFixed(2)}s - ${range.end.toFixed(2)}s] to ${rawNext.toFixed(2)}s.`,
+                  recoveryLog: `[SKIP PLAYBACK] Immediate leap across deleted word range [${range.start.toFixed(2)}s - ${range.end.toFixed(2)}s] to ${rawNext.toFixed(2)}s.`,
                 }));
                 break;
               }
@@ -2220,7 +2255,6 @@ export const App: React.FC = () => {
               onSelectMediaId={setActiveTranscriptMediaId}
               onToggleDeleteToken={handleToggleDeleteToken}
               onToggleDeleteMultipleTokens={handleToggleDeleteMultipleTokens}
-              onPurgeFillers={handlePurgeFillers}
               onRestoreAllTokens={handleRestoreAll}
               onEditTokenText={handleEditTokenText}
               onSeekToTime={handleTranscriptSeek}
@@ -2233,6 +2267,7 @@ export const App: React.FC = () => {
               transcriptionError={transcriptionError}
               onClearTranscriptionError={() => setTranscriptionError(null)}
               onSummarizeKeyPoints={handleSummarizeKeyPoints}
+              onAutoClean={handleAutoClean}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */

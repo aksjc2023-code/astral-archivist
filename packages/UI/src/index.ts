@@ -6,6 +6,7 @@ export * from './components/layout/StatusFooter';
 export * from './components/workspace/MediaGridView';
 export * from './components/workspace/ImportDropzoneView';
 export * from './components/workspace/TranscriptEditorView';
+export * from './components/workspace/AutoCleanButton';
 export * from './components/workspace/ToolsDrawerView';
 export * from './components/workspace/EffectsGridView';
 export * from './components/player/VideoPreviewMonitor';

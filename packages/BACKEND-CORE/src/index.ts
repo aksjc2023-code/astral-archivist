@@ -6,4 +6,5 @@ export * from './filterGraphBuilder';
 export * from './audioProcessor';
 export * from './ttsEngine';
 export * from './extractiveSummarizer';
+export * from './disfluencyCutter';
 export * from './mockData';

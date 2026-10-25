@@ -9,6 +9,8 @@ import {
   AspectRatio,
   PlaybackSegment,
   WordToken,
+  TitleClipData,
+  OverlayItem,
   buildVideoScaleFilter,
   generateConcatDemuxerList,
   generateFfmpegFilterComplex,
@@ -49,6 +51,9 @@ export interface WasmExportOptions {
   rotationAngle?: number;
   activeTransition?: string;
   activeTransitionDuration?: number;
+  activeTitle?: string;
+  activeTitleData?: TitleClipData;
+  activeSticker?: string;
   onProgress?: (progress: WasmExportProgress) => void;
   onLog?: (log: string) => void;
 }
@@ -523,12 +528,17 @@ export async function exportCompositionWithFfmpegWasm(
     throw new Error('No video clips found on timeline to export.');
   }
 
-  // Single clip fast-path (only if no background audio tracks to multiplex and no transcript cut segments)
+  // Single clip fast-path (only if no background audio tracks to multiplex, no transcript cut segments, and no overlays/styling)
   if (
     clipInputs.length === 1 &&
     clipInputs[0] &&
     (!options.audioInputs || options.audioInputs.length === 0) &&
-    (!clipInputs[0].segments || clipInputs[0].segments.length <= 1)
+    (!clipInputs[0].segments || clipInputs[0].segments.length <= 1) &&
+    !options.activeTitle &&
+    !options.activeTitleData &&
+    !options.activeSticker &&
+    (!options.activeFilter || options.activeFilter === 'none') &&
+    !options.activeTransition
   ) {
     const single = clipInputs[0];
     const segment: PlaybackSegment = {
@@ -618,11 +628,40 @@ export async function exportCompositionWithFfmpegWasm(
       });
     }
 
-    // BUG-03 Fix: Attach subtitles ASS script
+    // Attach subtitles ASS script with titles and stickers
     let subFileName: string | undefined;
-    if (options.includeSubtitles && tokens && tokens.length > 0 && ext !== 'mp3' && ext !== 'gif') {
+    const overlays: OverlayItem[] = [];
+    if (options.activeTitle || options.activeTitleData) {
+      const titleText = options.activeTitleData?.text || options.activeTitle;
+      if (titleText && titleText.trim()) {
+        overlays.push({
+          text: titleText.trim(),
+          startTime: 0,
+          endTime: totalDuration,
+          style: 'title',
+          posX: options.activeTitleData?.position?.x ?? 50,
+          posY: options.activeTitleData?.position?.y ?? 82,
+          fontSize: options.activeTitleData?.fontSize ?? 56,
+        });
+      }
+    }
+    if (options.activeSticker && options.activeSticker.trim()) {
+      overlays.push({
+        text: `★ ${options.activeSticker.trim().toUpperCase()}`,
+        startTime: 0,
+        endTime: totalDuration,
+        style: 'sticker',
+        posX: 50,
+        posY: 18,
+      });
+    }
+
+    const hasTokens = Boolean(options.includeSubtitles && tokens && tokens.length > 0);
+    const hasOverlays = overlays.length > 0;
+
+    if ((hasTokens || hasOverlays) && ext !== 'mp3' && ext !== 'gif') {
       try {
-        const assScript = generateAssSubtitleScript(tokens, {});
+        const assScript = generateAssSubtitleScript(hasTokens ? tokens : [], { overlays });
         subFileName = 'composition_subtitles.ass';
         await ffmpeg.writeFile(subFileName, new TextEncoder().encode(assScript));
         allocatedFiles.add(subFileName);

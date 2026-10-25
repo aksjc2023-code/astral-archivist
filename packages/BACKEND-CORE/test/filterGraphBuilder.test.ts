@@ -194,3 +194,18 @@ test('8. buildTrimConcatFilter generates valid filter_complex with PTS-STARTPTS 
   assert.ok(multiFilter.filterComplex.includes('[v0][a0][v1][a1]concat=n=2:v=1:a=1[outv][outa]'));
   assert.deepEqual(multiFilter.outputMap, ['-map', '[outv]', '-map', '[outa]']);
 });
+
+test('9. generateAssSubtitleScript renders title and sticker overlays into ASS script events', () => {
+  const ass = generateAssSubtitleScript([], {
+    overlays: [
+      { text: 'Epic Title', startTime: 0, endTime: 5.0, style: 'title', posX: 50, posY: 80 },
+      { text: '★ TRENDING', startTime: 1.0, endTime: 6.0, style: 'sticker', posX: 50, posY: 20 },
+    ],
+  });
+
+  assert.ok(ass.includes('Style: ScarletTitle'));
+  assert.ok(ass.includes('Style: ScarletSticker'));
+  assert.ok(ass.includes('Dialogue: 1,0:00:00.00,0:00:05.00,ScarletTitle,,0,0,0,,{\\pos(960,864)\\b1}Epic Title'));
+  assert.ok(ass.includes('Dialogue: 1,0:00:01.00,0:00:06.00,ScarletSticker,,0,0,0,,{\\pos(960,216)\\b1}★ TRENDING'));
+});
+

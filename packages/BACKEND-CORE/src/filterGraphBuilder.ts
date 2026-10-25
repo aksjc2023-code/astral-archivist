@@ -6,6 +6,17 @@
 import { AspectRatio, PlaybackSegment, WordToken, TimeRange, asSourceSeconds } from './types';
 import { sourceToVirtualTime } from './timelineEngine';
 
+export interface OverlayItem {
+  text: string;
+  startTime: number;
+  endTime: number;
+  style?: 'title' | 'sticker';
+  posX?: number; // 0 to 100 percent
+  posY?: number; // 0 to 100 percent
+  fontSize?: number;
+  colorHex?: string;
+}
+
 export interface AssScriptOptions {
   title?: string;
   fontSize?: number;
@@ -16,6 +27,7 @@ export interface AssScriptOptions {
   playResX?: number;
   playResY?: number;
   wordsPerSentence?: number;
+  overlays?: OverlayItem[];
 }
 
 /**
@@ -77,10 +89,27 @@ export function generateAssSubtitleScript(
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: ScarletDefault,${fontName},${fontSize},${primaryColorHex},&H000000FF,${outlineColorHex},${shadowColorHex},-1,0,0,0,100,100,0,0,1,3,1.5,2,40,40,65,1`,
+    `Style: ScarletTitle,Arial,60,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3.5,2,2,40,40,80,1`,
+    `Style: ScarletSticker,Arial,48,&H0000FFFF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3.5,2,5,40,40,40,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
+
+  // Render Title and Sticker overlays if provided
+  if (options.overlays && options.overlays.length > 0) {
+    for (const ov of options.overlays) {
+      if (!ov.text || !ov.text.trim()) continue;
+      const sTime = formatAssTimestamp(Math.max(0, ov.startTime));
+      const eTime = formatAssTimestamp(Math.max(ov.endTime, ov.startTime + 0.5));
+      const styleName = ov.style === 'sticker' ? 'ScarletSticker' : 'ScarletTitle';
+      const x = Math.round(((ov.posX ?? 50) / 100) * playResX);
+      const y = Math.round(((ov.posY ?? (ov.style === 'sticker' ? 22 : 82)) / 100) * playResY);
+      const fs = ov.fontSize ? `\\fs${ov.fontSize}` : '';
+      const posTag = `{\\pos(${x},${y})${fs}\\b1}`;
+      lines.push(`Dialogue: 1,${sTime},${eTime},${styleName},,0,0,0,,${posTag}${ov.text}`);
+    }
+  }
 
   if (activeTokens.length === 0) {
     return lines.join('\n');

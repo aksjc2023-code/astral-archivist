@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "pnpm --filter webster dev",
     "build": "pnpm --filter \"@astral/*\" build && pnpm --filter webster build",
-    "test": "tsx --test packages/BACKEND-CORE/test/timelineEngine.test.ts packages/BACKEND-CORE/test/fillerAndWhisper.test.ts packages/BACKEND-CORE/test/filterGraphBuilder.test.ts",
+    "test": "tsx --test packages/BACKEND-CORE/test/timelineEngine.test.ts packages/BACKEND-CORE/test/fillerAndWhisper.test.ts packages/BACKEND-CORE/test/filterGraphBuilder.test.ts packages/BACKEND-CORE/test/disfluencyCutter.test.ts",
     "typecheck": "pnpm --recursive typecheck",
     "lint": "eslint . --ext .ts,.tsx"
   },
