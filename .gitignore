@@ -35,9 +35,14 @@ coverage/
 .gemini/
 AGENTS.md
 
-# Specific request: do not commit the master prompt/plan files
-Master Engineering Plan.md
-scarletcut_antigravity_master_ui_execution_plan.md
+# Specific request: do not commit the master prompt/plan files or markdown specs
+*.md
+!README.md
 scratch_dossier_text.txt
 *.pdf
+.antigravityrules
 
+# Binaries & models (large files)
+bin/
+models/
+test_mandel.*

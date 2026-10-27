@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capability for the main and grimoire windows",
+  "windows": ["main", "grimoire"],
+  "permissions": [
+    "core:default",
+    "shell:default",
+    "fs:default",
+    "fs:allow-read-file",
+    {
+      "identifier": "fs:scope",
+      "allow": ["$LOCALDATA/**", "$APPDATA/**", "$TEMP/**"]
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Default capability for the main and grimoire windows","local":true,"windows":["main","grimoire"],"permissions":["core:default","shell:default","fs:default","fs:allow-read-file",{"identifier":"fs:scope","allow":["$LOCALDATA/**","$APPDATA/**","$TEMP/**"]}]}}

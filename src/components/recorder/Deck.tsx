@@ -1,0 +1,213 @@
+import React, { useEffect, useRef } from 'react';
+import { Play, Pause, Square, RefreshCw, AlertCircle, Camera, CameraOff, Mic } from 'lucide-react';
+import { useRecorderStore } from '../../store/useRecorderStore';
+import { useVaultStore } from '../../store/useVaultStore';
+
+export const Deck: React.FC = () => {
+  const {
+    config, isRecording, isPaused, durationMs, error, isLoading,
+    isCameraOn, toggleCamera, updateConfig,
+    startRecording, startVoiceOnlyRecording, pauseRecording, resumeRecording, stopRecording, tickDuration,
+  } = useRecorderStore();
+
+  const fetchRecordings = useVaultStore((s) => s.fetchRecordings);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isRecording && !isPaused) {
+      timerRef.current = window.setInterval(() => { tickDuration(200); }, 200);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [isRecording, isPaused, tickDuration]);
+
+  const handleStop = async () => {
+    await stopRecording();
+    await fetchRecordings();
+  };
+
+  const formatTime = (ms: number) => {
+    const totalSec = Math.floor(ms / 1000);
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    const tenths = Math.floor((ms % 1000) / 100);
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${tenths}`;
+  };
+
+  return (
+    <div className="flex flex-col gap-4 rounded-xl border border-amber-500/25 bg-black/20 p-5 backdrop-blur-md shadow-2xl">
+      {/* Top Deck Title & Real-Time Status Badge */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-semibold uppercase tracking-wider text-astral-amber">
+            Astrolabe Capture Deck
+          </span>
+          {isRecording && (
+            <span className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+              config.target_type === 'audio_only'
+                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                : 'bg-red-500/20 text-red-300 border-red-500/40'
+            }`}>
+              <span className={`h-1.5 w-1.5 rounded-full animate-ping ${
+                config.target_type === 'audio_only' ? 'bg-purple-400' : 'bg-red-500'
+              }`} />
+              {config.target_type === 'audio_only'
+                ? (isPaused ? 'VOICE PAUSED' : 'VOICE REC')
+                : (isPaused ? 'PAUSED' : 'REC')}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg bg-red-950/60 border border-red-800/80 p-2.5 text-xs text-red-300">
+          <AlertCircle className="h-4 w-4 shrink-0 text-red-400" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* Controls: Audio + Camera Overlay Toggle + FPS */}
+      <div className="flex items-center justify-between border-t border-slate-700/40 pt-3 text-xs text-slate-200">
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.include_microphone}
+              disabled={isRecording}
+              onChange={(e) => updateConfig({ include_microphone: e.target.checked })}
+              className="accent-astral-amber rounded"
+            />
+            <span>Microphone</span>
+          </label>
+          <label className="flex items-center gap-1.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={config.include_system_audio}
+              disabled={isRecording}
+              onChange={(e) => updateConfig({ include_system_audio: e.target.checked })}
+              className="accent-astral-amber rounded"
+            />
+            <span>System Audio</span>
+          </label>
+          <button
+            type="button"
+            onClick={toggleCamera}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded border text-[11px] font-semibold transition-all ${
+              isCameraOn
+                ? 'border-amber-500/80 bg-amber-500/20 text-astral-amber shadow-sm'
+                : 'border-slate-700/60 bg-black/20 text-slate-400 hover:text-slate-200'
+            }`}
+            title="Toggle Webcam Overlay inclusion in recording"
+          >
+            {isCameraOn ? <Camera className="h-3 w-3" /> : <CameraOff className="h-3 w-3" />}
+            <span>Webcam {isCameraOn ? 'ON' : 'OFF'}</span>
+          </button>
+        </div>
+
+        {/* 30 FPS / 60 FPS Toggle */}
+        <div className="flex items-center gap-1 bg-slate-950/40 p-1 rounded-lg border border-slate-700/40 backdrop-blur-sm">
+          <button
+            onClick={() => updateConfig({ fps: 30 })}
+            disabled={isRecording}
+            className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
+              config.fps === 30
+                ? 'bg-amber-500/20 text-astral-amber border border-amber-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Record at 30 FPS standard"
+          >
+            30 FPS
+          </button>
+          <button
+            onClick={() => updateConfig({ fps: 60 })}
+            disabled={isRecording}
+            className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
+              config.fps === 60
+                ? 'bg-amber-500/20 text-astral-amber border border-amber-500/40 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+            title="Record at 60 FPS smooth high-framerate"
+          >
+            60 FPS
+          </button>
+        </div>
+      </div>
+
+      {/* Action Transport Bar */}
+      <div className="flex items-center justify-between border-t border-slate-700/40 pt-3">
+        <div className="font-mono text-lg font-bold tracking-wider text-slate-100">
+          {formatTime(durationMs)}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {!isRecording ? (
+            <>
+              {/* Separate Button for Voice Only Record */}
+              <button
+                onClick={startVoiceOnlyRecording}
+                disabled={isLoading}
+                className="flex items-center gap-2 rounded-lg border border-purple-500/50 bg-purple-950/40 px-3.5 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900/60 hover:border-purple-400 hover:text-white transition-all shadow-md shadow-purple-950/30 active:scale-95 disabled:opacity-50"
+                title="Record Microphone Audio Only (Podcasting / Voice notes)"
+              >
+                <Mic className="h-4 w-4 text-purple-400" />
+                <span>Voice Only</span>
+              </button>
+
+              {/* Primary Screen / Window Record Button */}
+              <button
+                onClick={startRecording}
+                disabled={isLoading}
+                className="flex items-center gap-2 rounded-lg bg-astral-amber px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400 transition-all shadow-lg shadow-astral-amber/20 active:scale-95 disabled:opacity-50"
+                title="Record Selected Screen or Window"
+              >
+                <Play className="h-4 w-4 fill-slate-950" />
+                <span>Record Screen</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {isPaused ? (
+                <button
+                  onClick={resumeRecording}
+                  className="flex items-center gap-1.5 rounded-lg border border-astral-amber/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-astral-amber hover:bg-slate-800/80 transition-all"
+                >
+                  <Play className="h-3.5 w-3.5 fill-astral-amber" />
+                  <span>Resume</span>
+                </button>
+              ) : (
+                <button
+                  onClick={pauseRecording}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800/80 transition-all"
+                >
+                  <Pause className="h-3.5 w-3.5" />
+                  <span>Pause</span>
+                </button>
+              )}
+
+              <button
+                onClick={handleStop}
+                disabled={isLoading}
+                className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 transition-all shadow-lg shadow-red-600/20 active:scale-95 disabled:opacity-70"
+              >
+                {isLoading ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <>
+                    <Square className="h-3.5 w-3.5 fill-white" />
+                    <span>Stop & Vault</span>
+                  </>
+                )}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
