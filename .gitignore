@@ -35,9 +35,13 @@ coverage/
 .gemini/
 AGENTS.md
 
-# Specific request: do not commit the master prompt/plan files or markdown specs
+# Specific request: do not commit prompt/plan files, markdown specs, archives or zip files
 *.md
 !README.md
+_archive/
+archive/
+*.zip
+apps/
 scratch_dossier_text.txt
 *.pdf
 .antigravityrules

@@ -1,154 +1,177 @@
-# ScarletCut: The Scarlet Rewrite (Webster 2026 // Problem Statement #09)
-## Comprehensive Technical Dossier, Architecture Specification & AntiGravity Runbook
+# 🌌 THE ASTRAL ARCHIVIST
+### Celestial Recording Studio & Offline Non-Linear Video Editor
+
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-blue.svg?logo=tauri&logoColor=white)](https://tauri.app/)
+[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-6.0-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 1. Executive Summary & Architecture Overview
+## 🔮 Overview
 
-**ScarletCut** (`astral-scarlet-monorepo`) is a 100% browser-native, text-driven non-linear video editing (NLE) environment. It couples local on-device machine learning transcription (WebGPU / ONNX Whisper) with sub-millisecond timeline ripple compaction, automated acoustic/lexical filler pruning, and client-side FFmpeg WebAssembly rendering—with **zero server-side dependencies or cloud compute costs**.
+**The Astral Archivist** is an ultra-modern, local-first multimedia creation suite designed for content creators, researchers, and digital storytellers. It unifies a high-performance **Celestial Screen & Webcam Recording Studio**, an **Encrypted Archive Library**, and a **Desktop-Grade Multi-Track Video Editor** with local AI transcription—all running 100% offline with zero cloud latency and total data sovereignty.
 
 ```
-                           ┌────────────────────────────────────────────────────────┐
-                           │               Browser Runtime Sandbox                  │
-                           └──────────────────────────┬─────────────────────────────┘
-                                                      │
-         ┌────────────────────────────────────────────┼────────────────────────────────────────────┐
-         │                                            │                                            │
-         ▼                                            ▼                                            ▼
-┌────────────────────────┐               ┌────────────────────────┐               ┌────────────────────────┐
-│     @astral/core       │               │   @astral/ui-editor    │               │      apps/webster      │
-│  (Pure TypeScript NLE) │               │   (React Componentry)  │               │    (Vite Application)  │
-├────────────────────────┤               ├────────────────────────┤               ├────────────────────────┤
-│ • Bijective Timeline   │               │ • Video Preview Monitor│               │ • WebGPU Whisper Engine│
-│   Mapping Φ(τ)         │               │ • Multi-Track Timeline │               │ • FFmpeg WASM Exporter │
-│ • Filler Purge Engine  │               │ • Transcript Word Flow │               │ • COOP / COEP Headers  │
-│ • Vocal Purifier DSP   │               │ • Tools & Effects Rack │               │ • MEMFS Heap Watcher   │
-│ • WAV RIFF Synthesizer │               │ • Fault Recovery Bar   │               │ • Media Ingestion Pipe │
-│ • TF-IDF Summarizer    │               │ • Export Dialog        │               │ • Local Blob Lifecycle │
-└────────────────────────┘               └────────────────────────┘               └────────────────────────┘
+                              ┌──────────────────────────────────────────────┐
+                              │            THE ASTRAL ARCHIVIST              │
+                              │           Tauri v2 Desktop App               │
+                              └──────────────────────┬───────────────────────┘
+                                                     │
+               ┌─────────────────────────────────────┼─────────────────────────────────────┐
+               │                                     │                                     │
+               ▼                                     ▼                                     ▼
+ ┌───────────────────────────┐         ┌───────────────────────────┐         ┌───────────────────────────┐
+ │       STUDIO SUITE        │         │      ARCHIVE LIBRARY      │         │     SCARLET NLE EDITOR    │
+ ├───────────────────────────┤         ├───────────────────────────┤         ├───────────────────────────┤
+ │ • Multi-source recorder   │         │ • High-density cards      │         │ • 5-Track virtual timeline│
+ │ • Sacred camera mandala   │         │ • Dynamic thumbnails      │         │ • Video, Audio, Titles,   │
+ │ • System + Mic audio mix  │         │ • Inline video player     │         │   Stickers & Filter tracks│
+ │ • Invisible Grimoire      │         │ • One-click editor import │         │ • On-device Whisper AI    │
+ │   teleprompter window     │         │ • Renaming & vault delete │         │ • Client-side FFmpeg WASM │
+ └───────────────────────────┘         └───────────────────────────┘         └───────────────────────────┘
 ```
 
-### 1.1 Monorepo Structure
+---
 
-- **`packages/core`**: Zero-DOM pure TypeScript library (`lib: ["ES2022"]`). Contains mathematical models for bijective virtual timeline mapping, acoustic coalescing, lexical filler detection, 85Hz vocal DSP, offline RIFF/WAV overdub synthesis, TF-IDF summarization, and FFmpeg filtergraph construction.
-- **`packages/ui-editor`**: Reusable React 18 component library styled with high-density dark-mode aesthetics. Contains the interactive transcript viewer, multi-track timeline, dual-screen video preview monitor, tools drawer, and fault recovery bars.
-- **`apps/webster`**: Vite-powered client single-page application. Integrates WebGPU `@huggingface/transformers` Whisper inference, single-pass `@ffmpeg/ffmpeg` WebAssembly compilation, media container duration/dimension probing, and MEMFS garbage collection.
+## ✨ Key Features
+
+### 🎙️ 1. Studio Recording Suite
+- **Flexible Capture Modes**: Screen + Camera composite, Screen only, or high-fidelity Voice-only recording.
+- **Astral Camera Mandala**: Movable, resizable circular webcam overlay with animated celestial borders.
+- **Grimoire Teleprompter**: A dedicated, floating transparent note-taking and script prompter with OS window capture exclusion (`WDA_EXCLUDEFROMCAPTURE`), keeping your notes invisible in recordings.
+- **Multi-Source Audio Routing**: Synchronous hardware mixing of system display audio and microphone tracks.
+
+### 🏛️ 2. Vault Archive Library
+- **Visual Archive Grid**: Instant access to all recorded takes and voice notes with generated frame thumbnails.
+- **Full Player Modal**: In-app playback with scrubber, duration stamps, and audio waveform indicators.
+- **One-Click Timeline Transfer**: Open any saved take directly in the multi-track editor with automatic timeline synchronization.
+- **Atomic Operations**: Rename, filter by media type (Video / Audio), or delete recordings from the local database.
+
+### ✂️ 3. Scarlet Multi-Track NLE Editor
+- **5-Track Non-Destructive Editing Engine**:
+  - `Track 1`: **Effects & Filters** (Cyberpunk Neon, Vintage Film, Monochrome Noir, Cinematic Warmth, VHS Glitch)
+  - `Track 2`: **Stickers & Overlays** (Subscribe badge, Glowing arrows, Fire, Astral runes)
+  - `Track 3`: **Titles & Subtitles** (Cinematic serif, Neon bold, Minimal lower-thirds)
+  - `Track 4`: **Composite Video** (Multi-clip timeline with ripple compaction, razor splits, and transitions)
+  - `Track 5`: **Audio & Voiceover** (Individual track gain, mute/lock controls, background music layering)
+- **Drag-and-Drop Workflow**:
+  - Drag clips, filters, stickers, and transitions directly into target tracks or onto video clips.
+  - Interactive edge-trimming with yellow hover handles to adjust clip durations seamlessly.
+- **Project Persistence**:
+  - Full project state preservation across tab switches.
+  - Project management bar with project naming, `+ New`, `💾 Save`, and `📂 Open` actions backed by local storage and JSON export.
+- **High-Precision Video Preview**:
+  - Dual monitor mode (Source Clip vs. Master Timeline).
+  - 60 FPS playhead scrubbing with millisecond-level timecode displays (`00:00:00:000`).
+  - Interactive zoom control (`Ctrl + Wheel` or zoom slider) for precise cutting.
+- **On-Device Whisper AI & Auto-Clean**:
+  - Local speech-to-text powered by ONNX / WebGPU Transformers.
+  - Text-based transcript editing: deleting words in transcript automatically slices corresponding video frames.
 
 ---
 
-## 2. Mathematical Formalization of Timeline Slicing & Subtitle Mapping
+## 🛠️ Technology Stack
 
-### 2.1 Coalescing Equivalence Relation
-Given an ordered sequence of transcribed word tokens $T = \langle t_1, t_2, \dots, t_n \rangle$ where each token is a tuple $t_i = (s_i, e_i, d_i)$ with source start time $s_i$, source end time $e_i$ ($0 \le s_i < e_i \le s_{i+1}$), and deletion flag $d_i \in \{0, 1\}$:
-
-The active subset of kept tokens is defined as:
-$$K = \{ t_i \in T \mid d_i = 0 \}$$
-
-Two consecutive kept tokens $t_{i_r}, t_{i_{r+1}} \in K$ coalesce into the same contiguous playback segment $S_k = [a_k, b_k]$ if and only if:
-1. No intervening tokens were deleted: $i_{r+1} - i_r = 1$
-2. The acoustic boundary gap does not exceed the merge threshold:
-$$s_{i_{r+1}} - e_{i_r} \le \epsilon_{\text{merge}} \quad (\epsilon_{\text{merge}} = 0.085\text{ s})$$
-
-Any segment whose duration is shorter than the minimum hardware decoder slice limit is discarded to prevent decoding pipeline stalls:
-$$\Delta(S_k) = b_k - a_k \ge \Delta_{\min} \quad (\Delta_{\min} = 0.030\text{ s})$$
-
-### 2.2 Bijective Piecewise-Linear Virtual Timeline Mapping $\Phi(\tau)$
-Let $\mathcal{S} = \langle S_1, S_2, \dots, S_m \rangle$ be the coalesced, non-deleted playback segments where $S_k = [a_k, b_k]$ in source seconds.
-
-The virtual timeline is defined over $[0, V_{\text{total}}]$ where:
-$$v_1^{\text{start}} = 0$$
-$$v_k^{\text{start}} = \sum_{j=1}^{k-1} (b_j - a_j) \quad \text{for } k > 1$$
-$$v_k^{\text{end}} = v_k^{\text{start}} + (b_k - a_k)$$
-$$V_{\text{total}} = v_m^{\text{end}}$$
-
-The forward mapping $\Phi: \bigcup_{k=1}^m [a_k, b_k] \to [0, V_{\text{total}}]$ projects source media timestamp $\tau$ onto virtual playback time:
-$$\Phi(\tau) = v_k^{\text{start}} + (\tau - a_k) \quad \text{for } \tau \in [a_k, b_k)$$
-
-The inverse mapping $\Phi^{-1}: [0, V_{\text{total}}] \to \bigcup_{k=1}^m [a_k, b_k]$ determines the source media seek position:
-$$\Phi^{-1}(v) = a_k + (v - v_k^{\text{start}}) \quad \text{for } v \in [v_k^{\text{start}}, v_k^{\text{end}})$$
-
-By evaluating token intervals through $\Phi(\tau)$ inside `generateAssSubtitleScript()`, dialogue subtitles remain synchronized with video across arbitrarily many ripple cuts.
-
----
-
-## 3. Self-Healing Edge-Case Failure Modes
-
-| Failure Mode | Mechanism | Self-Healing Remediation |
+| Layer | Technology | Description |
 | :--- | :--- | :--- |
-| **1. Decoder Pipeline Stall / Black Frame** | Media decoders choke when seeking to deleted regions or encountering sub-30ms cuts. | Clamps intervals via $\Delta_{\min} = 0.030\text{s}$ guard and performs binary search leaps (`getNextValidTime`) across cut boundaries in $O(\log m)$. |
-| **2. MEMFS Heap Exhaustion** | 32-bit WebAssembly linear memory caps at 2GB, causing out-of-memory crashes on large video export. | Imposes strict 750MB pre-flight check, executes deterministic descriptor unlinking (`ffmpeg.deleteFile()`) inside `finally` blocks, and detaches ArrayBuffer clones. |
-| **3. WebGPU Hardware Context Loss** | Mobile/integrated GPUs drop WebGPU device contexts during heavy compute or backgrounding. | Detects context errors and transparently falls back to multi-threaded SIMD ONNX Runtime WebAssembly CPU execution. |
+| **Desktop Shell** | [Tauri v2](https://tauri.app/) (Rust) | Native Windows/macOS/Linux windowing, OS IPC, low memory footprint |
+| **Frontend Framework** | [React 18](https://react.dev/) + [Vite 6](https://vitejs.dev/) | High-performance component rendering and lightning-fast HMR |
+| **State Management** | [Zustand](https://github.com/pmndrs/zustand) | Decoupled reactive stores for Recorder, Vault, Timeline, and Editor |
+| **Styling** | [Tailwind CSS 3](https://tailwindcss.com/) | Curated dark-mode aesthetic with custom astral glassmorphic tokens |
+| **Icons** | [Lucide React](https://lucide.dev/) | Clean, consistent vector iconography |
+| **AI Inference** | [@huggingface/transformers](https://huggingface.co/docs/transformers.js) | WebGPU-accelerated local Whisper transcription |
+| **Video Processing** | [@ffmpeg/ffmpeg](https://ffmpegwasm.netlify.app/) WebAssembly | Client-side format transcoding, filtergraphs, and container packaging |
 
 ---
 
-## 4. Key Feature Implementation Matrix
+## 📁 Repository Structure
 
-- **Text-Driven Non-Linear Editor**: Real-time interactive word token editing. Selecting text and pressing `Backspace` performs sub-millisecond ripple cuts without re-encoding video during editing.
-- **Automated Filler & Pause Pruning**: Detects lexical fillers (`um`, `uh`, `like`, `you know`), discourse markers, and silent pauses (>0.5s) with 120ms acoustic padding to preserve natural cadence.
-- **Offline Prosody-Matched TTS Overdub**: Synthesizes 16-bit RIFF/WAV audio buffers in-memory with prosody rate clamping ($r \in [0.65, 1.75]$) to replace transcribed words.
-- **Vocal Purifier DSP**: 85Hz High-Pass Filter + 2.8kHz Peaking EQ + RMS soft noise gate implemented with zero DOM dependencies.
-- **Local TF-IDF Summarizer**: Client-side extractive summarizer that scores sentences based on normalized term and document frequency.
-- **Client-Side WASM Rendering**: Single-pass FFmpeg filter_complex generation supporting stream-copy fast-path (`-c copy`), ASS subtitle burn-in, and resolution/aspect ratio scaling (16:9, 9:16, 1:1, 4:5, 21:9, 4:3).
-- **Zero-Trust Cross-Origin Isolation**: Vite configured with `COOP: same-origin` and `COEP: credentialless` to unlock high-performance `SharedArrayBuffer` threading without third-party asset blocking.
+```
+.
+├── src/
+│   ├── assets/               # Celestial backgrounds, logos, and camera mandalas
+│   ├── components/
+│   │   ├── grimoire/         # Notes & teleprompter window
+│   │   ├── library/          # Vault archive library view & thumbnail cache
+│   │   ├── recorder/         # Recording deck, source selectors, webcam overlay
+│   │   ├── timeline/         # Studio playback scrubber
+│   │   ├── transcript/       # Voice note transcribe reader
+│   │   └── vault/            # Video playback modal
+│   ├── editor/
+│   │   ├── ScarletEditorApp.tsx  # Central NLE Video Editor application
+│   │   ├── editorBridge.ts       # Cross-tab state sharing & project loader
+│   │   ├── core/                 # Timeline mathematical engine, DSP & filtergraphs
+│   │   ├── export/               # FFmpeg WASM exporter pipeline
+│   │   ├── services/             # Offline Whisper AI speech recognition
+│   │   └── ui/
+│   │       ├── common/           # Scarlet UI buttons and icons
+│   │       ├── layout/           # Activity dock, sub-nav sidebar, status footer
+│   │       ├── modals/           # Export modal, capture dialog, fault bar
+│   │       ├── player/           # Dual-screen video preview monitor
+│   │       ├── timeline/         # MultiTrackTimeline with drag & trim handles
+│   │       └── workspace/        # Media drawer, effects, stickers, titles
+│   ├── store/                # Zustand stores (useRecorderStore, useVaultStore, useTimelineStore)
+│   ├── types/                # IPC interfaces, EDL models, and recording metadata
+│   ├── utils/                # Media utilities, canvas composite engine, audio mixer
+│   ├── App.tsx               # Main window layout & tab coordinator
+│   └── main.tsx              # React DOM entry point
+├── src-tauri/
+│   ├── src/
+│   │   ├── commands/         # Rust IPC commands (capture, vault, media, ai)
+│   │   ├── engine/           # Screen recording, FFmpeg probe, native Whisper
+│   │   └── utils/            # Vault storage & filesystem helpers
+│   ├── Cargo.toml            # Rust backend dependencies
+│   └── tauri.conf.json       # Tauri window and capability configuration
+├── public/                   # Static icons and assets
+├── package.json              # NPM dependencies and scripts
+└── tsconfig.json             # TypeScript compiler configuration
+```
 
 ---
 
-## 5. Technology Stack & Tool Disclosure
+## 🚀 Getting Started
 
-- **Runtime & Build**: Node.js 20+, pnpm 9+, Vite 6, TypeScript 5.7 (strict mode with `noImplicitAny`, `noUncheckedIndexedAccess`).
-- **Core ML / AI**: `@huggingface/transformers` (Whisper-tiny.en ONNX WebGPU + WASM SIMD fallback).
-- **Media Transcoding**: `@ffmpeg/ffmpeg` 0.12.6 and `@ffmpeg/core` 0.12.6 (WebAssembly).
-- **UI Framework**: React 18, Lucide React icons, JetBrains Mono & Inter typography, HTML5 Canvas / Web Audio API.
+### Prerequisites
+- **Node.js**: v18.0+ or v20.0+
+- **Rust**: `rustc` and `cargo` (latest stable toolchain)
+- **OS Dependencies** (Windows: C++ Build Tools; Linux: WebKit2GTK / libappindicator)
 
----
-
-## 6. Verification & Runbook
-
-### 6.1 Runbook Commands
-
+### Installation
 ```bash
-# 1. Install all dependencies across workspace
-pnpm install
+# Clone the repository
+git clone https://github.com/aksjc2023-code/astral-archivist.git
+cd astral-archivist
 
-# 2. Run pure TypeScript unit test suite (21 tests across 3 packages)
-pnpm test
-
-# 3. Perform strict type-checking across packages and apps
-pnpm typecheck
-
-# 4. Compile Webster production bundle
-pnpm build
-
-# 5. Launch development server with cross-origin isolation
-pnpm dev
+# Install frontend dependencies
+npm install
 ```
 
-### 6.2 Unit Test Suite Output
-
-```text
-✔ 1. Extended punctuation stripping handles ellipses, em-dashes, and smart quotes
-✔ 2. Hard fillers vs discourse markers and multi-word phrase matching
-✔ 3. Pause tokens inject 120ms acoustic breathing room and enforce strict mediaId
-✔ 4. Purge options protect discourse markers by default and compute exact savings
-✔ 5. Resample PCM with anti-aliasing preserves 440Hz tone and rejects invalid sample rates
-✔ 6. Timestamp monotonicity alignment rejects empty chunks and clamps out-of-order timestamps
-✔ 7. Device-aware Whisper runner factory and GPU-error specific fallback
-✔ 8. decodeAndResampleTo16kHzMono invokes audio context factories and decodes buffer
-✔ 1. formatAssTimestamp converts seconds to H:MM:SS.cs standard ASS format
-✔ 2. generateAssSubtitleScript filters deleted & pause tokens and maps virtual timestamps across cuts
-✔ 3. generateConcatDemuxerList generates valid ffconcat manifest with inpoints and outpoints
-✔ 4. generateFfmpegFilterComplex builds single-pass concat graph across multiple cuts and scale filters
-✔ 5. Vocal purifier DSP, WAV RIFF TTS overdubbing, and TF-IDF summarizer operate deterministically
-✔ 1. Unsorted input and zero/negative length tokens normalization
-✔ 2. Micro-gap coalescing (<= 85ms merges, > 85ms splits)
-✔ 3. Deleted first, middle, and last tokens with ripple virtual mapping
-✔ 4. 30ms hardware decoder fault guard discards micro-blips
-✔ 5. Binary search leap across cut intervals and boundary epsilon
-✔ 6. Bijective mapping invertibility between source and virtual domains
-✔ 7. Domain validators accept valid data and throw on invalid data
-✔ 8. Asset-scoped ripple segments isolates cuts per media asset
-ℹ tests 21
-ℹ suites 0
-ℹ pass 21
-ℹ fail 0
+### Development
+```bash
+# Launch the full desktop application (Vite dev server + Tauri native shell)
+npm run tauri dev
 ```
+
+### Production Build
+```bash
+# Type check and build Vite frontend
+npm run build
+
+# Compile native release binary with Tauri
+npm run tauri build
+```
+
+---
+
+## 🛡️ Security & Privacy
+- **Zero Cloud Leakage**: All recordings, transcripts, and video edits remain strictly on your local disk.
+- **Affinity Privacy**: The Grimoire teleprompter leverages Windows native API `WDA_EXCLUDEFROMCAPTURE` to keep private notes out of screen captures.
+- **Non-Destructive EDL**: Cuts, trims, and edits modify an in-memory Edit Decision List (EDL) without destroying the original source recordings.
+
+---
+
+## 📜 License
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

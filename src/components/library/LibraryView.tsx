@@ -11,28 +11,24 @@ import {
   HardDrive,
   PlayCircle,
   Eye,
-  Sliders,
   Search,
   Filter,
   Sparkles,
-  ArrowRight,
   RefreshCw,
 } from 'lucide-react';
 import { useVaultStore } from '../../store/useVaultStore';
-import { useTimelineStore } from '../../store/useTimelineStore';
 import { loadThumbnailSrc, formatDurationMs, formatSizeBytes, formatCreationDate } from '../../utils/media';
 import { VideoPlayerModal } from '../vault/VideoPlayerModal';
 import type { VaultItem } from '../../types/ipc';
 
 interface LibraryViewProps {
-  onOpenInTimeline: (item: VaultItem) => void;
   onGoToStudio: () => void;
+  onOpenInEditor?: (item: VaultItem) => void;
 }
 
-export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGoToStudio }) => {
+export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenInEditor }) => {
   const { recordings, selectedItem, fetchRecordings, renameRecording, deleteRecording, isLoading } =
     useVaultStore();
-  const edl = useTimelineStore((s) => s.edl);
 
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [filterType, setFilterType] = useState<'all' | 'video' | 'audio'>('all');
@@ -46,18 +42,25 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
     fetchRecordings();
   }, [fetchRecordings]);
 
-  // Load thumbnails asynchronously
+  const loadedThumbsRef = React.useRef<Set<string>>(new Set());
+
+  // Load thumbnails asynchronously without trigger loops
   useEffect(() => {
+    let isMounted = true;
     recordings.forEach((item) => {
-      if (item.thumbnail_path && !thumbMap[item.id]) {
+      if (item.thumbnail_path && !loadedThumbsRef.current.has(item.id)) {
+        loadedThumbsRef.current.add(item.id);
         loadThumbnailSrc(item.thumbnail_path).then((src) => {
-          if (src) {
+          if (src && isMounted) {
             setThumbMap((prev) => ({ ...prev, [item.id]: src }));
           }
         });
       }
     });
-  }, [recordings, thumbMap]);
+    return () => {
+      isMounted = false;
+    };
+  }, [recordings]);
 
   // Filtered recordings
   const filteredRecordings = useMemo(() => {
@@ -99,10 +102,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
   };
 
   const handleDelete = async (id: string, title: string) => {
-    const isCurrentlyInTimeline = edl?.project_id === id;
-    const confirmMsg = isCurrentlyInTimeline
-      ? `Permanently erase "${title}"?\n\nThis will remove the media file from disk AND clear it from the active timeline editor.`
-      : `Permanently erase "${title}" from the Vault Library?`;
+    const confirmMsg = `Permanently erase "${title}" from the Vault Library?`;
 
     if (window.confirm(confirmMsg)) {
       setDeletingId(id);
@@ -132,7 +132,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Review, edit on timeline, rename, or permanently erase your recordings
+              Review, rename, or permanently erase your recordings
             </p>
           </div>
         </div>
@@ -207,16 +207,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
             <span>Audio ({audioCount})</span>
           </button>
         </div>
-
-        {edl && (
-          <button
-            onClick={onGoToStudio}
-            className="flex items-center gap-1.5 text-xs font-semibold text-astral-amber hover:text-amber-300 transition-colors"
-          >
-            <span>Active in Timeline: {edl.title}</span>
-            <ArrowRight className="h-3.5 w-3.5" />
-          </button>
-        )}
       </div>
 
       {/* Grid of Recordings */}
@@ -245,7 +235,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
           {filteredRecordings.map((item) => {
             const isCurrentlySelected = selectedItem?.id === item.id;
-            const isLoadedInTimeline = edl?.project_id === item.id;
             const thumbUrl = thumbMap[item.id] ?? '';
             const isAudioOnly = item.filepath.endsWith('.m4a') || item.width === 0;
 
@@ -253,9 +242,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
               <div
                 key={item.id}
                 className={`group relative flex flex-col rounded-2xl border overflow-hidden transition-all backdrop-blur-xl shadow-xl ${
-                  isLoadedInTimeline
-                    ? 'border-amber-400 bg-black/40 ring-2 ring-amber-500/30 shadow-amber-500/10'
-                    : isCurrentlySelected
+                  isCurrentlySelected
                     ? 'border-amber-500/70 bg-black/35 shadow-amber-500/10'
                     : 'border-amber-500/20 bg-black/25 hover:border-amber-500/50 hover:bg-black/35'
                 }`}
@@ -298,13 +285,6 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
                   <span className="absolute top-2.5 left-2.5 rounded-md bg-black/80 px-2 py-0.5 text-[10px] font-semibold tracking-wider text-slate-200 border border-slate-700/60 backdrop-blur">
                     {isAudioOnly ? 'AAC AUDIO' : `${item.width}x${item.height}`}
                   </span>
-
-                  {/* Active Timeline Tag */}
-                  {isLoadedInTimeline && (
-                    <span className="absolute top-2.5 right-2.5 rounded-md bg-amber-500/90 text-slate-950 font-bold px-2 py-0.5 text-[10px] tracking-wider shadow">
-                      IN TIMELINE
-                    </span>
-                  )}
 
                   {/* Duration Badge (Bottom Right) */}
                   <span className="absolute bottom-2.5 right-2.5 rounded-md bg-black/85 px-2 py-0.5 font-mono text-xs font-semibold text-amber-400 border border-amber-500/30 backdrop-blur">
@@ -382,7 +362,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
                     </div>
                   </div>
 
-                  {/* Actions Transport: Review, Timeline, Erase */}
+                  {/* Actions Transport: Review, Open in Editor, Erase */}
                   <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60">
                     {/* Review Button */}
                     <button
@@ -394,22 +374,24 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onOpenInTimeline, onGo
                       <span>Review</span>
                     </button>
 
-                    {/* Open in Timeline Button */}
-                    <button
-                      onClick={() => onOpenInTimeline(item)}
-                      className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-slate-700/80 bg-slate-900/80 py-1.5 text-xs font-semibold text-slate-200 hover:border-astral-amber hover:text-astral-amber transition-all"
-                      title="Load recording into Studio Timeline & Scribe"
-                    >
-                      <Sliders className="h-3.5 w-3.5" />
-                      <span>Timeline</span>
-                    </button>
+                    {/* Open in Editor Button */}
+                    {onOpenInEditor && (
+                      <button
+                        onClick={() => onOpenInEditor(item)}
+                        className="flex-1 flex items-center justify-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/10 py-1.5 text-xs font-semibold text-sky-400 hover:bg-sky-500/20 hover:border-sky-400 hover:text-sky-300 transition-all"
+                        title="Send recording directly to Editor timeline"
+                      >
+                        <Film className="h-3.5 w-3.5" />
+                        <span>Edit</span>
+                      </button>
+                    )}
 
                     {/* Permanently Erase Button */}
                     <button
                       onClick={() => handleDelete(item.id, item.title)}
                       disabled={deletingId === item.id}
                       className="flex items-center justify-center rounded-lg border border-red-500/30 bg-red-950/30 p-2 text-xs font-semibold text-red-400 hover:bg-red-900/40 hover:border-red-500/60 hover:text-red-300 transition-all disabled:opacity-50"
-                      title="Permanently erase recording from vault and timeline"
+                      title="Permanently erase recording from vault"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

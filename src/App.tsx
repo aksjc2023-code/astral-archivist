@@ -1,35 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { ScrollText, Radio, FolderArchive, ArrowRight, Sparkles } from 'lucide-react';
+import { ScrollText, Radio, FolderArchive, ArrowRight, Sparkles, Film } from 'lucide-react';
 import { Deck } from './components/recorder/Deck';
 import { Webcam } from './components/recorder/Webcam';
 import { LibraryView } from './components/library/LibraryView';
 import { Track } from './components/timeline/Track';
 import { Scribe } from './components/transcript/Scribe';
 import { Notes } from './components/grimoire/Notes';
+import { ScarletEditorApp } from './editor/ScarletEditorApp';
+import { useEditorBridgeStore } from './editor/editorBridge';
 import { useVaultStore } from './store/useVaultStore';
 import { useTimelineStore } from './store/useTimelineStore';
-import type { VaultItem } from './types/ipc';
 import mainBg from './assets/main_bg.jpg';
 import logoImg from './assets/logo.jpg';
 
 export const App: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'studio' | 'library'>('studio');
+  const [activeTab, setActiveTab] = useState<'studio' | 'library' | 'editor'>('studio');
   const [showGrimoire, setShowGrimoire] = useState<boolean>(false);
 
-  const { recordings, selectedItem, selectRecording, fetchRecordings } = useVaultStore();
-  const { edl, initEdl } = useTimelineStore();
+  const { recordings, selectedItem, fetchRecordings } = useVaultStore();
+  const { edl } = useTimelineStore();
 
   useEffect(() => {
     fetchRecordings();
   }, [fetchRecordings]);
-
-  // Handle opening a recording from Library directly into Studio Timeline & Scribe
-  const handleOpenInTimeline = (item: VaultItem) => {
-    selectRecording(item);
-    initEdl(item.id, item.title, item.duration_ms);
-    setActiveTab('studio');
-  };
 
   const toggleGrimoire = async () => {
     const next = !showGrimoire;
@@ -99,6 +93,18 @@ export const App: React.FC = () => {
                 </span>
               )}
             </button>
+
+            <button
+              onClick={() => setActiveTab('editor')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${
+                activeTab === 'editor'
+                  ? 'bg-astral-amber text-slate-950 shadow-md shadow-amber-500/20'
+                  : 'text-slate-300 hover:text-white hover:bg-white/5'
+              }`}
+            >
+              <Film className="h-3.5 w-3.5" />
+              <span>Editor</span>
+            </button>
           </nav>
         </div>
 
@@ -123,69 +129,82 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main Workspace Body */}
-      <main className="relative z-10 flex flex-1 p-6 overflow-y-auto">
-        {activeTab === 'studio' ? (
-          <div className="flex flex-col gap-6 w-full max-w-5xl mx-auto pb-12">
-            {/* Capture Deck (B1, B2) */}
-            <Deck />
+      <main className="relative z-10 flex flex-1 overflow-hidden">
+        {/* Studio Tab */}
+        <div
+          className={`w-full h-full overflow-y-auto p-6 flex flex-col gap-6 max-w-5xl mx-auto pb-12 ${
+            activeTab === 'studio' ? 'block' : 'hidden'
+          }`}
+        >
+          {/* Capture Deck (B1, B2) */}
+          <Deck />
 
-            {/* Timeline & Scribing Engine (B4, B5, A1) */}
-            {selectedItem && edl ? (
-              <div className="flex flex-col gap-6 animate-fadeIn">
-                <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-astral-amber">
-                      Active Timeline Archive:
-                    </span>
-                    <span className="text-xs font-semibold text-slate-200">{selectedItem.title}</span>
-                  </div>
-                  <button
-                    onClick={() => setActiveTab('library')}
-                    className="flex items-center gap-1 text-xs text-slate-400 hover:text-astral-amber transition-colors"
-                  >
-                    <span>Switch Archive in Library</span>
-                    <ArrowRight className="h-3 w-3" />
-                  </button>
+          {/* Timeline & Scribing Engine (B4, B5, A1) */}
+          {selectedItem && edl ? (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              <div className="flex items-center justify-between border-b border-amber-500/20 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold uppercase tracking-wider text-astral-amber">
+                    Active Timeline Archive:
+                  </span>
+                  <span className="text-xs font-semibold text-slate-200">{selectedItem.title}</span>
                 </div>
-                <Track />
-                <Scribe recordingId={selectedItem.id} />
+                <button
+                  onClick={() => setActiveTab('library')}
+                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-astral-amber transition-colors"
+                >
+                  <span>Switch Archive in Library</span>
+                  <ArrowRight className="h-3 w-3" />
+                </button>
               </div>
-            ) : (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border border-amber-500/20 bg-black/20 p-4 backdrop-blur-md">
-                <div className="flex items-center gap-3">
-                  <Sparkles className="h-5 w-5 text-astral-amber shrink-0" />
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-200">
-                      {recordings.length > 0
-                        ? `${recordings.length} Saved Recording${recordings.length > 1 ? 's' : ''} Ready in Library`
-                        : 'No Active Recording in Timeline'}
-                    </h3>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {recordings.length > 0
-                        ? 'Select an archive from the Library tab to scrub the timeline, cut segments, or transcribe voice notes.'
-                        : 'Record above with camera overlay & audio, or podcast with Voice-only mode.'}
-                    </p>
-                  </div>
+              <Track />
+              <Scribe recordingId={selectedItem.id} />
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl border border-amber-500/20 bg-black/20 p-4 backdrop-blur-md">
+              <div className="flex items-center gap-3">
+                <Sparkles className="h-5 w-5 text-astral-amber shrink-0" />
+                <div>
+                  <h3 className="text-xs font-bold text-slate-200">
+                    {recordings.length > 0
+                      ? `${recordings.length} Saved Recording${recordings.length > 1 ? 's' : ''} Ready in Library`
+                      : 'No Active Recording in Timeline'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {recordings.length > 0
+                      ? 'Select an archive from the Library tab to scrub the timeline, cut segments, or transcribe voice notes.'
+                      : 'Record above with camera overlay & audio, or podcast with Voice-only mode.'}
+                  </p>
                 </div>
-                {recordings.length > 0 && (
-                  <button
-                    onClick={() => setActiveTab('library')}
-                    className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-1.5 text-xs font-semibold text-astral-amber hover:bg-amber-500/20 transition-all shrink-0"
-                  >
-                    <span>Open Library</span>
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-                )}
               </div>
-            )}
-          </div>
-        ) : (
-          /* Library Tab: Shifted all saved videos and audios here */
+              {recordings.length > 0 && (
+                <button
+                  onClick={() => setActiveTab('library')}
+                  className="flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-1.5 text-xs font-semibold text-astral-amber hover:bg-amber-500/20 transition-all shrink-0"
+                >
+                  <span>Open Library</span>
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Library Tab */}
+        <div className={`w-full h-full overflow-y-auto p-6 ${activeTab === 'library' ? 'block' : 'hidden'}`}>
           <LibraryView
-            onOpenInTimeline={handleOpenInTimeline}
             onGoToStudio={() => setActiveTab('studio')}
+            onOpenInEditor={(item) => {
+              useEditorBridgeStore.getState().setPendingImportItem(item);
+              setActiveTab('editor');
+            }}
           />
-        )}
+        </div>
+
+        {/* Editor Tab: Kept mounted so timeline, video clips, and edits are NEVER lost when switching tabs */}
+        <div className={`w-full h-full flex flex-col overflow-hidden bg-[#111317] ${activeTab === 'editor' ? 'flex' : 'hidden'}`}>
+          <ScarletEditorApp />
+        </div>
       </main>
 
       {/* Floating Invisible Grimoire Teleprompter Window (A3) */}
@@ -195,8 +214,8 @@ export const App: React.FC = () => {
         </div>
       )}
 
-      {/* Astral Webcam Floating Projection Overlay (B2) */}
-      <Webcam />
+      {/* Astral Webcam Floating Projection Overlay (Only in Studio tab) */}
+      {activeTab === 'studio' && <Webcam />}
     </div>
   );
 };

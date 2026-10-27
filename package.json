@@ -1,21 +1,36 @@
 {
-  "name": "astral-scarlet-monorepo",
-  "version": "0.1.0",
+  "name": "astral-archivist",
   "private": true,
-  "description": "ScarletCut — Browser-Native Non-Linear Video Editor for Webster 2026",
+  "version": "0.1.0",
+  "type": "module",
   "scripts": {
-    "dev": "pnpm --filter webster dev",
-    "dev:desktop": "pnpm --filter @astral/archivist-app dev",
-    "tauri": "pnpm --filter @astral/archivist-app tauri",
-    "build": "pnpm --filter \"@astral/*\" build && pnpm --filter webster build",
-    "build:desktop": "pnpm --filter @astral/archivist-app build",
-    "test": "tsx --test packages/BACKEND-CORE/test/timelineEngine.test.ts packages/BACKEND-CORE/test/fillerAndWhisper.test.ts packages/BACKEND-CORE/test/filterGraphBuilder.test.ts packages/BACKEND-CORE/test/disfluencyCutter.test.ts",
-    "typecheck": "pnpm --recursive typecheck",
-    "lint": "eslint . --ext .ts,.tsx"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "cross-env PATH=\"%USERPROFILE%\\.cargo\\bin;%PATH%\" CARGO_TARGET_DIR=\"%USERPROFILE%\\.cargo-target-astral\" tauri"
+  },
+  "dependencies": {
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ffmpeg/util": "^0.12.2",
+    "@huggingface/transformers": "^4.3.1",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-fs": "^2.7.1",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "lucide-react": "^1.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.4",
-    "tsx": "^4.23.15",
-    "typescript": "^5.7.3"
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "cross-env": "^10.1.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.16",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
   }
 }
