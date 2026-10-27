@@ -122,6 +122,9 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   // Drag & Drop Timeline Indicator State
   const [dropIndicator, setDropIndicator] = useState<{ x: number; timeSec: number; trackId: string; trackName: string } | null>(null);
 
+  // Hovered Clip ID for interactive left/right trim handles
+  const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
+
   // Track control state fallback if not controlled by parent
   const [internalTrackStates, setInternalTrackStates] = useState<Record<string, TrackControlState>>({});
   const activeTrackStates = trackStates ?? internalTrackStates;
@@ -389,26 +392,29 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         const clipLeft = startSec * pxPerSec;
         const clipRight = clipLeft + durSec * pxPerSec;
 
-        let trackTop = 124;
-        let trackBottom = 200;
+        let trackTop = 156;
+        let trackBottom = 232;
         if (clip.trackId === 'track_effects') {
           trackTop = 28;
           trackBottom = 60;
-        } else if (clip.trackId === 'track_stickers' || clip.trackId === 'track_custom_stickers') {
+        } else if (clip.trackId === 'track_transitions') {
           trackTop = 60;
           trackBottom = 92;
-        } else if (clip.trackId === 'track_title') {
+        } else if (clip.trackId === 'track_stickers' || clip.trackId === 'track_custom_stickers') {
           trackTop = 92;
           trackBottom = 124;
-        } else if (clip.trackId === 'track_video') {
+        } else if (clip.trackId === 'track_title') {
           trackTop = 124;
-          trackBottom = 200;
+          trackBottom = 156;
+        } else if (clip.trackId === 'track_video') {
+          trackTop = 156;
+          trackBottom = 232;
         } else if (clip.trackId === 'track_audio') {
-          trackTop = 200;
-          trackBottom = 244;
+          trackTop = 232;
+          trackBottom = 276;
         } else {
           const customIdx = customTrackIds.indexOf(clip.trackId);
-          trackTop = 244 + (customIdx >= 0 ? customIdx : 0) * 40;
+          trackTop = 276 + (customIdx >= 0 ? customIdx : 0) * 40;
           trackBottom = trackTop + 40;
         }
 
@@ -444,11 +450,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     const rect = container.getBoundingClientRect();
     const y = clientY - rect.top + (container.scrollTop || 0);
     if (y < 60) return { trackId: 'track_effects', trackName: 'Effects & Filters Track' };
-    if (y < 92) return { trackId: 'track_stickers', trackName: 'Stickers & Overlays Track' };
-    if (y < 124) return { trackId: 'track_title', trackName: 'Titles Track' };
-    if (y < 200) return { trackId: 'track_video', trackName: 'Main Video Track' };
-    if (y < 244) return { trackId: 'track_audio', trackName: 'Audio Track' };
-    const customIdx = Math.floor((y - 244) / 40);
+    if (y < 92) return { trackId: 'track_transitions', trackName: 'Transitions Track' };
+    if (y < 124) return { trackId: 'track_stickers', trackName: 'Stickers & Overlays Track' };
+    if (y < 156) return { trackId: 'track_title', trackName: 'Titles Track' };
+    if (y < 232) return { trackId: 'track_video', trackName: 'Main Video Track' };
+    if (y < 276) return { trackId: 'track_audio', trackName: 'Audio Track' };
+    const customIdx = Math.floor((y - 276) / 40);
     if (customIdx >= 0 && customIdx < customTrackIds.length) {
       const tid = customTrackIds[customIdx]!;
       return { trackId: tid, trackName: tid.replace('track_custom_', 'Track ') };
@@ -501,7 +508,16 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     if (rawData) {
       try {
         const parsed = JSON.parse(rawData);
-        onDropItem?.(parsed, clickTime, trackId);
+        // Automatically enforce proper track routing so items never overlap on video track
+        let resolvedTrackId = trackId;
+        if (parsed.type === 'filters') resolvedTrackId = 'track_effects';
+        else if (parsed.type === 'transitions') resolvedTrackId = 'track_transitions';
+        else if (parsed.type === 'stickers') resolvedTrackId = 'track_stickers';
+        else if (parsed.type === 'titles') resolvedTrackId = 'track_title';
+        else if (parsed.type === 'asset' && parsed.data?.type === 'audio') resolvedTrackId = 'track_audio';
+        else if (parsed.type === 'asset' && parsed.data?.type === 'video') resolvedTrackId = 'track_video';
+
+        onDropItem?.(parsed, clickTime, resolvedTrackId);
       } catch (err) {
         console.warn('[Timeline] Failed to parse dropped item', err);
       }
@@ -546,19 +562,24 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
   const playheadPositionPx = currentTime * pxPerSec;
 
-  const effectClips = React.useMemo(() => clips.filter(c => c.trackId === 'track_effects' || (c as any).isFilter), [clips]);
-  const stickerClips = React.useMemo(() => clips.filter(c => {
-    // Strictly exclude any filter clips from stickers/overlay track
-    if (c.trackId === 'track_effects' || (c as any).isFilter) return false;
-    return (
-      c.trackId === 'track_stickers' ||
-      c.trackId === 'track_custom_stickers' ||
-      c.title.startsWith('★ ') ||
-      (c as any).isTransition ||
-      c.title.startsWith('⧉ ')
-    );
+  const effectClips = React.useMemo(() => clips.filter(c => {
+    return c.trackId === 'track_effects' || (c as any).isFilter || c.title.startsWith('⚡ ');
   }), [clips]);
-  const titleClips = React.useMemo(() => clips.filter(c => c.trackId === 'track_title' && !(c as any).isFilter), [clips]);
+
+  const transitionClips = React.useMemo(() => clips.filter(c => {
+    return c.trackId === 'track_transitions' || (c as any).isTransition || c.title.startsWith('⧉ ');
+  }), [clips]);
+
+  const stickerClips = React.useMemo(() => clips.filter(c => {
+    if (c.trackId === 'track_effects' || c.trackId === 'track_transitions' || (c as any).isFilter || (c as any).isTransition || c.title.startsWith('⚡ ') || c.title.startsWith('⧉ ')) return false;
+    return c.trackId === 'track_stickers' || c.trackId === 'track_custom_stickers' || c.title.startsWith('★ ');
+  }), [clips]);
+
+  const titleClips = React.useMemo(() => clips.filter(c => {
+    if (c.trackId === 'track_effects' || c.trackId === 'track_transitions' || (c as any).isFilter || (c as any).isTransition || c.title.startsWith('⚡ ') || c.title.startsWith('⧉ ')) return false;
+    return c.trackId === 'track_title' || c.trackId === 'track_custom_title';
+  }), [clips]);
+
   const videoClips = React.useMemo(() => clips.filter(c => c.trackId === 'track_video'), [clips]);
   const audioClips = React.useMemo(() => clips.filter(c => c.trackId === 'track_audio'), [clips]);
 
@@ -700,7 +721,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           </div>
         </div>
 
-        {/* Track 2 Header: Stickers & Overlays (★ Overlay) */}
+        {/* Track 2 Header: Transitions (⧉ Transitions) */}
         <div
           style={{
             height: '32px',
@@ -710,6 +731,47 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             justifyContent: 'space-between',
             padding: '0 6px',
             color: '#FA8231',
+          }}
+          title="Transitions Track"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ fontSize: '11px' }}>⧉</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Transitions</span>
+          </div>
+          <div style={{ display: 'flex', gap: '2px' }}>
+            <button
+              id="btn-hide-track_transitions"
+              data-testid="btn-hide-track_transitions"
+              type="button"
+              title={activeTrackStates['track_transitions']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_transitions')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={11} color={activeTrackStates['track_transitions']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              id="btn-lock-track_transitions"
+              data-testid="btn-lock-track_transitions"
+              type="button"
+              title={activeTrackStates['track_transitions']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_transitions')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={11} color={activeTrackStates['track_transitions']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
+          </div>
+        </div>
+
+        {/* Track 3 Header: Stickers & Overlays (★ Overlay) */}
+        <div
+          style={{
+            height: '32px',
+            borderBottom: '1px solid #2B303A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 6px',
+            color: '#F39C12',
           }}
           title="Stickers & Overlays Track"
         >
@@ -1316,6 +1378,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {effectClips.map(clip => {
               const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const isHovered = hoveredClipId === clip.id;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackHidden = activeTrackStates['track_effects']?.hidden;
@@ -1329,8 +1392,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_effects')}
-                  title={`[Effect] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim, Delete to remove`}
+                  title={`[Effect] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to adjust duration, Delete to remove`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
@@ -1355,8 +1420,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected */}
-                  {isSelected && (
+                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
                     <>
                       <div
                         id={`trim-left-${clip.id}`}
@@ -1364,7 +1429,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim In-Point (Left handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend effect in-point"
+                        title="Drag left handle to adjust duration / start"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_effects')}
                         style={{
                           position: 'absolute',
@@ -1376,6 +1441,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                       <div
@@ -1384,7 +1450,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim Out-Point (Right handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend effect out-point"
+                        title="Drag right handle to adjust duration"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_effects')}
                         style={{
                           position: 'absolute',
@@ -1396,6 +1462,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                     </>
@@ -1406,21 +1473,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             })}
           </div>
 
-          {/* Track 2 — Stickers & Overlays Strip */}
+          {/* Track 2 — Transitions Strip (Separate Block Track) */}
           <div
             style={{
               height: '32px',
               borderBottom: '1px solid #1E232B',
               position: 'relative',
-              backgroundColor: '#14171C',
+              backgroundColor: '#16191F',
             }}
           >
-            {stickerClips.map(clip => {
+            {transitionClips.map(clip => {
               const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const isHovered = hoveredClipId === clip.id;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
-              const isTrackHidden = activeTrackStates['track_stickers']?.hidden;
-              const isTrackLocked = activeTrackStates['track_stickers']?.locked;
+              const isTrackHidden = activeTrackStates['track_transitions']?.hidden;
+              const isTrackLocked = activeTrackStates['track_transitions']?.locked;
               return (
                 <div
                   key={clip.id}
@@ -1430,16 +1498,18 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
-                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_stickers')}
-                  title={`[Sticker/Overlay] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to trim, Delete to remove`}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_transitions')}
+                  title={`[Transition] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to adjust duration, Delete to remove`}
                   style={{
                     position: 'absolute',
                     left: `${clipStart * pxPerSec}px`,
                     width: `${Math.max(20, clipDur * pxPerSec)}px`,
                     height: '24px',
                     top: '4px',
-                    backgroundColor: clip.color || '#FA8231',
-                    border: isSelected ? '2px solid #00F0FF' : '1px solid #FFA502',
+                    backgroundColor: '#FA8231',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #FF9F1A',
                     borderRadius: '6px',
                     display: 'flex',
                     alignItems: 'center',
@@ -1456,8 +1526,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected */}
-                  {isSelected && (
+                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
                     <>
                       <div
                         id={`trim-left-${clip.id}`}
@@ -1465,7 +1535,113 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim In-Point (Left handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend sticker in-point"
+                        title="Drag left handle to adjust duration / start"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_transitions')}
+                        style={{
+                          position: 'absolute',
+                          left: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
+                        }}
+                      />
+                      <div
+                        id={`trim-right-${clip.id}`}
+                        data-testid={`trim-right-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim Out-Point (Right handle)"
+                        tabIndex={0}
+                        title="Drag right handle to adjust duration"
+                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_transitions')}
+                        style={{
+                          position: 'absolute',
+                          right: '0',
+                          top: '0',
+                          bottom: '0',
+                          width: '7px',
+                          backgroundColor: '#FFD32A',
+                          cursor: 'ew-resize',
+                          zIndex: 10,
+                          borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
+                        }}
+                      />
+                    </>
+                  )}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Track 3 — Stickers & Overlays Strip */}
+          <div
+            style={{
+              height: '32px',
+              borderBottom: '1px solid #1E232B',
+              position: 'relative',
+              backgroundColor: '#14171C',
+            }}
+          >
+            {stickerClips.map(clip => {
+              const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const isHovered = hoveredClipId === clip.id;
+              const clipStart = getClipStart(clip);
+              const clipDur = getClipDuration(clip);
+              const isTrackHidden = activeTrackStates['track_stickers']?.hidden;
+              const isTrackLocked = activeTrackStates['track_stickers']?.locked;
+              return (
+                <div
+                  key={clip.id}
+                  id={`timeline-clip-${clip.id}`}
+                  data-testid={`timeline-clip-${clip.id}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onSelectClip?.(clip.id);
+                  }}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
+                  onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_stickers')}
+                  title={`[Sticker/Overlay] ${clip.title} (${clipDur.toFixed(1)}s) - Drag to shift, Yellow handles to adjust duration, Delete to remove`}
+                  style={{
+                    position: 'absolute',
+                    left: `${clipStart * pxPerSec}px`,
+                    width: `${Math.max(20, clipDur * pxPerSec)}px`,
+                    height: '24px',
+                    top: '4px',
+                    backgroundColor: clip.color || '#F39C12',
+                    border: isSelected ? '2px solid #00F0FF' : '1px solid #FFA502',
+                    borderRadius: '6px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '0 8px',
+                    color: '#FFFFFF',
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    boxShadow: isSelected ? '0 0 14px rgba(0, 240, 255, 0.7)' : '0 2px 6px rgba(243, 156, 18, 0.4)',
+                    overflow: 'hidden',
+                    whiteSpace: 'nowrap',
+                    cursor: isTrackLocked ? 'not-allowed' : 'grab',
+                    opacity: isTrackHidden ? 0.3 : 1,
+                    filter: isTrackHidden ? 'grayscale(80%)' : 'none',
+                    transition: 'border 0.12s ease, opacity 0.15s ease',
+                  }}
+                >
+                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
+                    <>
+                      <div
+                        id={`trim-left-${clip.id}`}
+                        data-testid={`trim-left-${clip.id}`}
+                        role="separator"
+                        aria-label="Trim In-Point (Left handle)"
+                        tabIndex={0}
+                        title="Drag left handle to adjust duration / start"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_stickers')}
                         style={{
                           position: 'absolute',
@@ -1477,6 +1653,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                       <div
@@ -1485,7 +1662,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim Out-Point (Right handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend sticker out-point"
+                        title="Drag right handle to adjust duration"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_stickers')}
                         style={{
                           position: 'absolute',
@@ -1497,6 +1674,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                     </>
@@ -1518,6 +1696,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {titleClips.map(clip => {
               const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const isHovered = hoveredClipId === clip.id;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackHidden = activeTrackStates['track_title']?.hidden;
@@ -1531,6 +1710,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_title')}
                   onDoubleClick={e => {
                     e.stopPropagation();
@@ -1564,8 +1745,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected (Page 1 & Movavi Timeline feature) */}
-                  {isSelected && (
+                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
                     <>
                       <div
                         id={`trim-left-${clip.id}`}
@@ -1573,7 +1754,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim In-Point (Left handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend title in-point"
+                        title="Drag left handle to adjust duration / start"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_title')}
                         style={{
                           position: 'absolute',
@@ -1585,6 +1766,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                       <div
@@ -1593,7 +1775,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         role="separator"
                         aria-label="Trim Out-Point (Right handle)"
                         tabIndex={0}
-                        title="Drag to trim/extend title out-point"
+                        title="Drag right handle to adjust duration"
                         onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_title')}
                         style={{
                           position: 'absolute',
@@ -1605,6 +1787,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                     </>
@@ -1706,6 +1889,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {videoClips.map((clip, index) => {
               const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : (clip.id === selectedClipId || clip.isSelected);
+              const isHovered = hoveredClipId === clip.id;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackHidden = activeTrackStates['track_video']?.hidden;
@@ -1717,6 +1901,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_video')}
                   onDoubleClick={e => {
                     e.stopPropagation();
@@ -1745,8 +1931,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Yellow Drag Handles if Selected and track not locked */}
-                  {isSelected && !isTrackLocked && (
+                  {/* Yellow Drag Handles if Selected or Hovered and track not locked */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
                     <>
                       <div
                         id={`trim-left-${clip.id}`}
@@ -1766,6 +1952,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                       <div
@@ -1786,48 +1973,10 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                     </>
-                  )}
-
-                  {/* Premiere Pro Cut Transition Pill */}
-                  {clip.transitionIn && (
-                    <div
-                      id={`trans-pill-${clip.id}`}
-                      data-testid={`trans-pill-${clip.id}`}
-                      title={`Transition: ${clip.transitionIn} (${(clip.transitionDuration || 1.2).toFixed(1)}s) - Click to edit duration`}
-                      onClick={e => {
-                        e.stopPropagation();
-                        const curDur = String(clip.transitionDuration || 1.2);
-                        const newDur = prompt(`Set transition duration in seconds (0.3 - 4.0):`, curDur);
-                        if (newDur !== null && !isNaN(Number(newDur))) {
-                          onClipTransitionDurationChange?.(clip.id, Math.max(0.3, Math.min(4.0, Number(newDur))));
-                        }
-                      }}
-                      style={{
-                        position: 'absolute',
-                        left: '0px',
-                        top: '0px',
-                        bottom: '0px',
-                        width: `${Math.max(28, (clip.transitionDuration || 1.2) * pxPerSec)}px`,
-                        backgroundColor: 'rgba(250, 130, 49, 0.88)',
-                        borderRight: '2px solid #FF9F1A',
-                        borderRadius: '6px 0 0 6px',
-                        zIndex: 12,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        cursor: 'pointer',
-                        boxShadow: '2px 0 8px rgba(0,0,0,0.5)',
-                        overflow: 'hidden',
-                        padding: '0 4px',
-                      }}
-                    >
-                      <span style={{ fontSize: '9px', fontWeight: 800, color: '#FFFFFF', whiteSpace: 'nowrap', textShadow: '0 1px 3px rgba(0,0,0,0.8)' }}>
-                        ][ {clip.transitionIn}
-                      </span>
-                    </div>
                   )}
 
                   {/* Thumbnail Strip Header */}
@@ -1949,28 +2098,6 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         );
                       })}
                   </div>
-
-                  {/* Transition Badge "][" (Page 1) */}
-                  {clip.transitionOut && index < videoClips.length - 1 && (
-                    <div
-                      title="Transition: Cross Dissolve"
-                      style={{
-                        position: 'absolute',
-                        right: '-8px',
-                        top: '50%',
-                        transform: 'translateY(-50%)',
-                        backgroundColor: '#168BFF',
-                        color: '#FFFFFF',
-                        borderRadius: '4px',
-                        padding: '1px 3px',
-                        fontSize: '9px',
-                        fontWeight: 700,
-                        zIndex: 12,
-                      }}
-                    >
-                      ][
-                    </div>
-                  )}
                 </div>
               );
             })}
@@ -1986,6 +2113,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           >
             {audioClips.map(clip => {
               const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+              const isHovered = hoveredClipId === clip.id;
               const clipStart = getClipStart(clip);
               const clipDur = getClipDuration(clip);
               const isTrackMuted = activeTrackStates['track_audio']?.muted;
@@ -1999,6 +2127,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     e.stopPropagation();
                     onSelectClip?.(clip.id);
                   }}
+                  onMouseEnter={() => setHoveredClipId(clip.id)}
+                  onMouseLeave={() => setHoveredClipId(null)}
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_audio')}
                   onDoubleClick={e => {
                     e.stopPropagation();
@@ -2027,8 +2157,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'all 0.12s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected */}
-                  {isSelected && (
+                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
+                  {(isSelected || isHovered) && !isTrackLocked && (
                     <>
                       <div
                         id={`trim-left-${clip.id}`}
@@ -2048,6 +2178,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '2px 0 0 2px',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                       <div
@@ -2068,6 +2199,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                           cursor: 'ew-resize',
                           zIndex: 10,
                           borderRadius: '0 2px 2px 0',
+                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
                         }}
                       />
                     </>

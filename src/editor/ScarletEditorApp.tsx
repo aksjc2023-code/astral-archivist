@@ -130,6 +130,7 @@ export const ScarletEditorApp: React.FC = () => {
   const [selectedClipIds, setSelectedClipIds] = useState<string[]>([]);
   const [trackStates, setTrackStates] = useState<Record<string, { hidden?: boolean; locked?: boolean; muted?: boolean; volume?: number }>>({
     track_effects: { hidden: false, locked: false, muted: false, volume: 100 },
+    track_transitions: { hidden: false, locked: false, muted: false, volume: 100 },
     track_stickers: { hidden: false, locked: false, muted: false, volume: 100 },
     track_title: { hidden: false, locked: false, muted: false, volume: 100 },
     track_video: { hidden: false, locked: false, muted: false, volume: 100 },
@@ -300,15 +301,17 @@ export const ScarletEditorApp: React.FC = () => {
   // Active transition: strictly active during transition cut window
   const currentTransition = useMemo(() => {
     // 1. Check if there is an explicit transition clip on timeline active at currentTime
-    const transClip = clips.find(c => {
-      const isTrans = c.title.startsWith('⧉ ') || (c as any).isTransition;
-      if (!isTrans) return false;
-      const start = c.timelineStart ?? c.sourceStart ?? 0;
-      const dur = c.timelineDuration ?? c.duration ?? 0;
-      return currentTime >= start && currentTime <= start + dur;
-    });
-    if (transClip) {
-      return (transClip as any).transitionName || transClip.title.replace('⧉ ', '');
+    if (!trackStates['track_transitions']?.hidden) {
+      const transClip = clips.find(c => {
+        const isTrans = c.title.startsWith('⧉ ') || (c as any).isTransition || c.trackId === 'track_transitions';
+        if (!isTrans) return false;
+        const start = c.timelineStart ?? c.sourceStart ?? 0;
+        const dur = c.timelineDuration ?? c.duration ?? 0;
+        return currentTime >= start && currentTime <= start + dur;
+      });
+      if (transClip) {
+        return (transClip as any).transitionName || transClip.title.replace('⧉ ', '');
+      }
     }
 
     // 2. Check active video clip's transitionIn during entrance window [clipStart, clipStart + transitionWindowSec]
@@ -888,12 +891,13 @@ export const ScarletEditorApp: React.FC = () => {
         : Infinity;
 
       if (side === 'left') {
-        const maxDelta = curDur - 0.5; // Min duration 0.5s
+        const minDur = 0.3;
+        const maxDelta = curDur - minDur; // Min duration 0.3s
         // Guard against extending past previous sibling boundary AND negative sourceIn!
-        const maxLeftExtension = c.mediaId ? Math.min(curStart - maxPrevEnd, curIn) : (curStart - maxPrevEnd);
+        const maxLeftExtension = c.mediaId ? Math.min(curStart - maxPrevEnd, curIn) : Math.max(0, curStart - maxPrevEnd);
         const appliedDelta = Math.max(-Math.max(0, maxLeftExtension), Math.min(maxDelta, deltaSec));
-        const newStart = asTimelineSeconds(Number((curStart + appliedDelta).toFixed(2)));
-        const newDur = asSeconds(Number((curDur - appliedDelta).toFixed(2)));
+        const newStart = asTimelineSeconds(Number(Math.max(0, curStart + appliedDelta).toFixed(2)));
+        const newDur = asSeconds(Number(Math.max(minDur, curDur - appliedDelta).toFixed(2)));
         const newIn = asSourceSeconds(Number((c.mediaId ? Math.max(0, curIn + appliedDelta) : 0).toFixed(2)));
         const newOut = asSourceSeconds(Number((c.mediaId ? curOut : newDur).toFixed(2)));
         const updated: TimelineClip = {
@@ -914,8 +918,9 @@ export const ScarletEditorApp: React.FC = () => {
         return updated;
       } else {
         // Guard against extending past next sibling boundary
+        const minDur = 0.3;
         const maxPossibleDur = Number.isFinite(minNextStart) ? minNextStart - curStart : Infinity;
-        const requestedDur = Math.max(0.5, Number((curDur + deltaSec).toFixed(2)));
+        const requestedDur = Math.max(minDur, Number((curDur + deltaSec).toFixed(2)));
         const newDur = asSeconds(Math.min(requestedDur, maxPossibleDur));
         const newIn = asSourceSeconds(Number((c.mediaId ? curIn : 0).toFixed(2)));
         const newOut = asSourceSeconds(Number((c.mediaId ? curIn + newDur : newDur).toFixed(2)));
@@ -1162,32 +1167,10 @@ export const ScarletEditorApp: React.FC = () => {
       setActiveSticker(payload.name);
     } else if (payload.type === 'transitions') {
       setActiveTransition(payload.name);
-      // Check if dropped directly on or near a video clip on track_video
-      const videoClips = clips.filter(c => c.trackId === 'track_video');
-      const targetVideoClip = videoClips.find(c => {
-        const cStart = c.timelineStart ?? c.sourceStart ?? 0;
-        const cDur = c.timelineDuration ?? c.duration ?? 0;
-        return dropTime >= cStart - 0.4 && dropTime <= cStart + cDur;
-      });
-
-      if (targetVideoClip && (targetTrackId === 'track_video' || targetTrackId === '')) {
-        setClips(prev => prev.map(c => {
-          if (c.id !== targetVideoClip.id) return c;
-          return {
-            ...c,
-            transitionIn: payload.name,
-            transitionDuration: 1.2,
-          };
-        }));
-        setSelectedClipId(targetVideoClip.id);
-        setSelectedClipIds([targetVideoClip.id]);
-        return;
-      }
-
-      const dur = asSeconds(1.5);
+      const dur = asSeconds(2.0);
       const newTransClip: TimelineClip = {
         id: `trans_${Date.now()}`,
-        trackId: targetTrackId.startsWith('track_custom') ? targetTrackId : 'track_stickers',
+        trackId: 'track_transitions',
         title: `⧉ ${payload.name}`,
         timelineStart: dropTime,
         timelineDuration: dur,
@@ -1195,7 +1178,7 @@ export const ScarletEditorApp: React.FC = () => {
         sourceOut: asSourceSeconds(dur),
         sourceStart: dropTime,
         duration: dur,
-        transitionDuration: 1.5,
+        transitionDuration: dur,
         color: '#FA8231',
       };
       (newTransClip as any).isTransition = true;
@@ -2206,35 +2189,26 @@ export const ScarletEditorApp: React.FC = () => {
     if (activeDockTab === 'filters') {
       pushHistory(tokensByMedia, clips);
       setActiveFilter(effectName);
-      const targetId = selectedClipId || activeClip?.id;
-      if (targetId) {
-        setClips(prev => prev.map(c => c.id === targetId ? ({
-          ...c,
-          filter: effectName,
-          filterData: { filterName: effectName, intensity: 100 }
-        } as any) : c));
-      } else {
-        const newFilterClip: TimelineClip = {
-          id: `filter_${Date.now()}`,
-          trackId: 'track_effects',
-          title: `⚡ ${effectName}`,
-          timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-          timelineDuration: asSeconds(4.0),
-          sourceIn: asSourceSeconds(0),
-          sourceOut: asSourceSeconds(4.0),
-          sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-          duration: asSeconds(4.0),
-          color: '#EB3B5A',
-          filter: effectName,
-          filterData: { filterName: effectName, intensity: 100 },
-        };
-        (newFilterClip as any).isFilter = true;
-        (newFilterClip as any).filter = effectName;
-        validateTimelineClip(newFilterClip);
-        setClips(prev => [...prev, newFilterClip]);
-        setSelectedClipId(newFilterClip.id);
-        setSelectedClipIds([newFilterClip.id]);
-      }
+      const newFilterClip: TimelineClip = {
+        id: `filter_${Date.now()}`,
+        trackId: 'track_effects',
+        title: `⚡ ${effectName}`,
+        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineDuration: asSeconds(4.0),
+        sourceIn: asSourceSeconds(0),
+        sourceOut: asSourceSeconds(4.0),
+        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        duration: asSeconds(4.0),
+        color: '#EB3B5A',
+        filter: effectName,
+        filterData: { filterName: effectName, intensity: 100 },
+      };
+      (newFilterClip as any).isFilter = true;
+      (newFilterClip as any).filter = effectName;
+      validateTimelineClip(newFilterClip);
+      setClips(prev => [...prev, newFilterClip]);
+      setSelectedClipId(newFilterClip.id);
+      setSelectedClipIds([newFilterClip.id]);
     } else if (activeDockTab === 'titles') {
       pushHistory(tokensByMedia, clips);
       setActiveTitlePreset(effectName);
@@ -2265,36 +2239,27 @@ export const ScarletEditorApp: React.FC = () => {
       setSelectedClipIds([newTitleClip.id]);
     } else if (activeDockTab === 'transitions') {
       pushHistory(tokensByMedia, clips);
-      const targetId = selectedClipId || activeClip?.id;
-      if (targetId) {
-        setClips(prev => prev.map(c => c.id === targetId ? {
-          ...c,
-          transitionIn: effectName,
-          transitionDuration: 1.2
-        } : c));
-      } else {
-        const dur = asSeconds(1.5);
-        const newTransClip: TimelineClip = {
-          id: `trans_${Date.now()}`,
-          trackId: 'track_stickers',
-          title: `⧉ ${effectName}`,
-          timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-          timelineDuration: dur,
-          sourceIn: asSourceSeconds(0),
-          sourceOut: asSourceSeconds(dur),
-          sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
-          duration: dur,
-          transitionDuration: 1.5,
-          color: '#FA8231',
-        };
-        (newTransClip as any).isTransition = true;
-        (newTransClip as any).transitionName = effectName;
-        validateTimelineClip(newTransClip);
-        setClips(prev => [...prev, newTransClip]);
-        setSelectedClipId(newTransClip.id);
-        setSelectedClipIds([newTransClip.id]);
-      }
       setActiveTransition(effectName);
+      const dur = asSeconds(2.0);
+      const newTransClip: TimelineClip = {
+        id: `trans_${Date.now()}`,
+        trackId: 'track_transitions',
+        title: `⧉ ${effectName}`,
+        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineDuration: dur,
+        sourceIn: asSourceSeconds(0),
+        sourceOut: asSourceSeconds(dur),
+        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        duration: dur,
+        transitionDuration: dur,
+        color: '#FA8231',
+      };
+      (newTransClip as any).isTransition = true;
+      (newTransClip as any).transitionName = effectName;
+      validateTimelineClip(newTransClip);
+      setClips(prev => [...prev, newTransClip]);
+      setSelectedClipId(newTransClip.id);
+      setSelectedClipIds([newTransClip.id]);
     } else if (activeDockTab === 'stickers') {
       pushHistory(tokensByMedia, clips);
       setActiveSticker(effectName);
