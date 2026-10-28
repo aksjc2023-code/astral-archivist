@@ -69,6 +69,7 @@ import {
 import { ExportSettings } from '@astral/core';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useVaultStore } from '../store/useVaultStore';
+import { useTimelineStore } from '../store/useTimelineStore';
 import { useEditorBridgeStore } from './editorBridge';
 import type { VaultItem } from '../types/ipc';
 import { formatDurationMs, formatSizeBytes, formatCreationDate } from '../utils/media';
@@ -508,6 +509,114 @@ export const ScarletEditorApp: React.FC = () => {
       handleEditClipTitle(activeTitleClip.id, newText.trim());
     }
   }, [activeTitleClip, handleEditClipTitle]);
+
+  // Keyword-Driven B-Roll, Title, and Audio Ducking Handlers (Phase 2)
+  const handleInsertBRollForTokens = useCallback((tokenIds: string[]) => {
+    if (tokenIds.length === 0) return;
+    const selectedTokens = tokens.filter(t => tokenIds.includes(t.id));
+    if (selectedTokens.length === 0) return;
+
+    const first = selectedTokens[0]!;
+    const last = selectedTokens[selectedTokens.length - 1]!;
+    const startSec = Number(first.start);
+    const endSec = Number(last.end);
+    const durSec = asSeconds(Math.max(1.0, Number((endSec - startSec).toFixed(2))));
+
+    const bRollAsset = mediaAssets.find(a => a.type === 'video' && a.id !== activeMediaId) || mediaAssets[0];
+    const bRollTitle = selectedTokens.map(t => t.text).slice(0, 3).join(' ');
+
+    const newClip: TimelineClip = {
+      id: `clip_broll_${Date.now()}`,
+      trackId: 'track_stickers',
+      title: `🎬 B-Roll: ${bRollTitle}`,
+      timelineStart: asTimelineSeconds(startSec),
+      timelineDuration: durSec,
+      sourceIn: asSourceSeconds(0),
+      sourceOut: asSourceSeconds(durSec),
+      sourceStart: asTimelineSeconds(startSec),
+      duration: durSec,
+      color: '#168BFF',
+      locator: bRollAsset?.locator || bRollAsset?.videoUrl,
+      videoUrl: bRollAsset?.videoUrl,
+      mediaId: bRollAsset?.id,
+    };
+    validateTimelineClip(newClip);
+
+    pushHistory(tokensByMedia, clips);
+    setClips(prev => [...prev, newClip]);
+    setSelectedClipId(newClip.id);
+    setSelectedClipIds([newClip.id]);
+    setCurrentTime(startSec);
+
+    setCaptureStatus(`🎬 Inserted B-Roll anchored to "${bRollTitle}"`);
+    setTimeout(() => setCaptureStatus(''), 2500);
+  }, [tokens, mediaAssets, activeMediaId, pushHistory, tokensByMedia, clips]);
+
+  const handleAddTitleForTokens = useCallback((tokenIds: string[], text: string) => {
+    if (tokenIds.length === 0) return;
+    const selectedTokens = tokens.filter(t => tokenIds.includes(t.id));
+    if (selectedTokens.length === 0) return;
+
+    const first = selectedTokens[0]!;
+    const last = selectedTokens[selectedTokens.length - 1]!;
+    const startSec = Number(first.start);
+    const endSec = Number(last.end);
+    const durSec = asSeconds(Math.max(1.0, Number((endSec - startSec).toFixed(2))));
+
+    const titleText = text.trim() || 'Lower Third';
+    const newTitleClip: TimelineClip = {
+      id: `clip_title_${Date.now()}`,
+      trackId: 'track_title',
+      title: titleText,
+      timelineStart: asTimelineSeconds(startSec),
+      timelineDuration: durSec,
+      sourceIn: asSourceSeconds(0),
+      sourceOut: asSourceSeconds(durSec),
+      sourceStart: asTimelineSeconds(startSec),
+      duration: durSec,
+      color: '#8854D0',
+      titleData: {
+        text: titleText,
+        stylePreset: 'Lower Third News',
+        position: { x: 50, y: 80 },
+        fontSize: 22,
+        scale: 1.0,
+        color: '#FFFFFF',
+        alignment: 'center',
+      },
+    };
+    validateTimelineClip(newTitleClip);
+
+    pushHistory(tokensByMedia, clips);
+    setClips(prev => [...prev, newTitleClip]);
+    setSelectedClipId(newTitleClip.id);
+    setSelectedClipIds([newTitleClip.id]);
+    setCurrentTime(startSec);
+
+    setCaptureStatus(`🔤 Added Title "${titleText}" to Titles track`);
+    setTimeout(() => setCaptureStatus(''), 2500);
+  }, [tokens, pushHistory, tokensByMedia, clips]);
+
+  const handleAddDuckingForTokens = useCallback((tokenIds: string[]) => {
+    if (tokenIds.length === 0) return;
+    const selectedTokens = tokens.filter(t => tokenIds.includes(t.id));
+    if (selectedTokens.length === 0) return;
+
+    const first = selectedTokens[0]!;
+    const last = selectedTokens[selectedTokens.length - 1]!;
+    const startSec = Number(first.start);
+    const endSec = Number(last.end);
+
+    useTimelineStore.getState().addDuckingSpan({
+      start: startSec,
+      end: endSec,
+      anchorWordIdStart: first.id,
+      anchorWordIdEnd: last.id,
+    });
+
+    setCaptureStatus(`🔉 Audio Ducking applied to keyword span [${startSec.toFixed(2)}s - ${endSec.toFixed(2)}s]`);
+    setTimeout(() => setCaptureStatus(''), 2500);
+  }, [tokens]);
 
   // Exact mapped source offset within the active video clip
   const activeClipSourceTime = useMemo(() => {
@@ -2662,6 +2771,9 @@ export const ScarletEditorApp: React.FC = () => {
               onSummarizeKeyPoints={handleSummarizeKeyPoints}
               onAutoClean={handleAutoClean}
               onOpenAudioEnhancement={() => setIsAudioEnhancementOpen(true)}
+              onInsertBRollForTokens={handleInsertBRollForTokens}
+              onAddTitleForTokens={handleAddTitleForTokens}
+              onAddDuckingForTokens={handleAddDuckingForTokens}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */

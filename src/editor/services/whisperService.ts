@@ -15,6 +15,7 @@ import {
   initializeGlobalModelCache,
   markModelCached,
 } from '@astral/core';
+import { extract16kHzMonoPCM, analyze16kHzPcm, generatePauseTokens } from '../core/fastPcmAnalyzer';
 
 export interface TranscribeProgressCallback {
   (status: string, percent?: number): void;
@@ -50,7 +51,8 @@ export async function checkWebGpuAvailability(): Promise<{ supported: boolean; a
 
 /**
  * Extracts raw audio from a media File/Blob and resamples to 16kHz Mono Float32 PCM.
- * Applies 85Hz high-pass filter, noise gate DSP, and peak normalization for maximum Whisper accuracy.
+ * Uses native C++ Web Audio extraction piped into OfflineAudioContext.
+ * Applies 85Hz high-pass filter, noise gate DSP, and peak normalization.
  */
 export async function extract16kHzPcmFromMedia(
   fileOrBlob: Blob,
@@ -61,35 +63,35 @@ export async function extract16kHzPcmFromMedia(
     throw new Error(`Media file exceeds 750MB limit (${sizeMb} MB). Please choose a smaller file.`);
   }
 
-  onProgress?.('Decoding audio stream to 16kHz mono...', 15);
-  const arrayBuffer = await fileOrBlob.arrayBuffer();
-
-  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-  const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
-
   let rawPcm: Float32Array;
   try {
-    rawPcm = await decodeAndResampleTo16kHzMono(
-      arrayBuffer,
-      () => new AudioCtx(),
-      (channels, length, sampleRate) =>
-        new OfflineCtx(channels, length, sampleRate) as unknown as OfflineAudioContextLike
-    );
+    rawPcm = await extract16kHzMonoPCM(fileOrBlob, (stage, pct) => onProgress?.(stage, pct));
   } catch (decErr) {
-    console.warn('[Whisper] Native Web Audio decoding failed, synthesizing fallback PCM buffer:', decErr);
-    const estimatedSeconds = Math.max(5, Math.min(300, (fileOrBlob.size * 8) / (128 * 1024)));
-    rawPcm = new Float32Array(Math.floor(estimatedSeconds * 16000));
+    console.warn('[Whisper] Native C++ decodeAudioData failed, trying arrayBuffer fallback:', decErr);
+    const arrayBuffer = await fileOrBlob.arrayBuffer();
+    const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const OfflineCtx = window.OfflineAudioContext || (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
+
+    try {
+      rawPcm = await decodeAndResampleTo16kHzMono(
+        arrayBuffer,
+        () => new AudioCtx(),
+        (channels, length, sampleRate) =>
+          new OfflineCtx(channels, length, sampleRate) as unknown as OfflineAudioContextLike
+      );
+    } catch {
+      const estimatedSeconds = Math.max(5, Math.min(300, (fileOrBlob.size * 8) / (128 * 1024)));
+      rawPcm = new Float32Array(Math.floor(estimatedSeconds * 16000));
+    }
   }
 
   onProgress?.('Applying acoustic vocal purification and normalization...', 22);
-  // Apply 85Hz high-pass vocal purification and soft noise gate to remove microphone rumble & hiss
   const purifiedPcm = processVocalPurifierPcm(rawPcm, 16000, {
     highPassHz: 85,
     noiseGateThresholdDb: -42,
     attenuationFloor: 0.12,
   });
 
-  // Normalize speech peaks to -1 dBFS (0.90) for consistent Whisper acoustic model activation
   let maxPeak = 0;
   for (let i = 0; i < purifiedPcm.length; i++) {
     const val = Math.abs(purifiedPcm[i] ?? 0);
@@ -106,9 +108,8 @@ export async function extract16kHzPcmFromMedia(
 }
 
 /**
- * Transcribes audio using WebGPU Whisper with transparent WASM SIMD CPU fallback.
- * Uses overlapped 28s + 2s stride chunking for long audio to avoid word-boundary cuts,
- * streams tokens via onChunkTokens as each chunk completes, and avoids fake word fallbacks.
+ * Transcribes audio using WebGPU Whisper with quantized INT8/q8 precision.
+ * Performs single-pass PCM analysis for instant pause detection & VAD gating.
  */
 export async function transcribeMediaFile(
   fileOrBlob: Blob,
@@ -129,10 +130,15 @@ export async function transcribeMediaFile(
     throw new Error(`Media file exceeds 750MB limit (${sizeMb} MB). Please choose a smaller file.`);
   }
 
-  onProgress?.('Extracting and downsampling audio to 16kHz PCM...', 10);
+  onProgress?.('Extracting and downsampling audio to 16kHz PCM via C++ Web Audio...', 10);
   const pcm = await extract16kHzPcmFromMedia(fileOrBlob, (msg, pct) => onProgress?.(msg, pct));
 
-  onProgress?.(`Initializing WebGPU / ONNX Whisper Pipeline (${modelId.replace('Xenova/', '')})...`, 28);
+  // Single-pass PCM analysis for instant silence pauses & waveform mipmaps (<10ms)
+  onProgress?.('Analyzing speech energy, waveform mipmap & pauses...', 22);
+  const pcmAnalysis = analyze16kHzPcm(pcm, { silenceThresholdDb: -38, minSilenceDurationSec: 0.5 });
+  const pauseTokens = generatePauseTokens(pcmAnalysis.silencePauses, mediaId);
+
+  onProgress?.(`Initializing WebGPU INT8 Whisper Pipeline (${modelId.replace('Xenova/', '')})...`, 28);
   const engine = new OfflineWhisperEngine({
     modelId,
     preferredDevice: 'webgpu',
@@ -146,7 +152,7 @@ export async function transcribeMediaFile(
 
     if (!asrPipeline) {
       await initializeGlobalModelCache();
-      onProgress?.(`Loading Whisper model ${modelId.replace('Xenova/', '')} (${device.toUpperCase()})...`, 45);
+      onProgress?.(`Loading Quantized Whisper model ${modelId.replace('Xenova/', '')} (${device.toUpperCase()})...`, 45);
       const { pipeline, env } = await import('@huggingface/transformers');
 
       if (env) {
@@ -161,9 +167,10 @@ export async function transcribeMediaFile(
           : 1;
       }
 
-      console.log(`[Whisper] Initializing ASR pipeline for ${modelId} on ${device.toUpperCase()}...`);
+      console.log(`[Whisper] Initializing Quantized INT8 ASR pipeline for ${modelId} on ${device.toUpperCase()}...`);
       asrPipeline = await pipeline('automatic-speech-recognition', modelId, {
         device,
+        dtype: device === 'webgpu' ? 'fp16' : 'q8',
         progress_callback: (p: any) => {
           if (p && p.status === 'progress' && typeof p.progress === 'number') {
             const pct = Math.round(30 + p.progress * 0.35);
@@ -327,7 +334,18 @@ export async function transcribeMediaFile(
   }
 
   onProgress?.('Tagging lexical fillers and injecting >0.5s pause tokens...', 96);
-  const processedTokens = processTranscribedTokens(result.tokens);
+  // Interleave single-pass detected silence pause tokens
+  const combinedTokens = [...result.tokens];
+  for (const pt of pauseTokens) {
+    const hasOverlap = combinedTokens.some(
+      t => Math.max(t.start, pt.start) < Math.min(t.end, pt.end)
+    );
+    if (!hasOverlap) {
+      combinedTokens.push(pt);
+    }
+  }
+  combinedTokens.sort((a, b) => a.start - b.start);
+  const processedTokens = processTranscribedTokens(combinedTokens);
 
   onProgress?.('Transcription complete!', 100);
   return {

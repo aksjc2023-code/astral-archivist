@@ -278,3 +278,122 @@ export interface ExportSettings {
   outputPath: string;
   wasmMode: 'stream-copy' | 'filter-complex-ass';
 }
+
+/**
+ * Phase 2: Token-Anchored Multi-Track State Interfaces
+ * Overlays bound directly to Transcript Word Token IDs rather than fragile static timestamps.
+ */
+export interface BRollClip {
+  id: string;
+  trackId: string;
+  name?: string;
+  sourceFile?: File;
+  sourceUrl: string;
+  sourceStart: number;
+  sourceEnd: number;
+  anchorWordIdStart: string;
+  anchorWordIdEnd: string;
+  timelineStart: number;
+  timelineEnd: number;
+  transform: {
+    x: number;       // percentage 0 - 100 or px
+    y: number;
+    width: number;
+    height: number;
+    opacity: number;
+    fit: 'cover' | 'contain' | 'pip';
+    borderRadius?: number;
+  };
+  transitionIn?: {
+    type: 'fade' | 'crossfade' | 'slide_left' | 'slide_up' | 'zoom';
+    duration: number;
+  };
+  transitionOut?: {
+    type: 'fade' | 'crossfade' | 'slide_left' | 'slide_up' | 'zoom';
+    duration: number;
+  };
+}
+
+export interface KineticTitleClip {
+  id: string;
+  trackId: string;
+  text: string;
+  anchorWordIdStart: string;
+  anchorWordIdEnd: string;
+  timelineStart: number;
+  timelineEnd: number;
+  style: {
+    fontFamily?: string;
+    fontSize: number;
+    color: string;
+    backgroundColor?: string;
+    strokeColor?: string;
+    strokeWidth?: number;
+    position: 'lower_third' | 'center' | 'top_banner' | 'custom';
+    animation: 'none' | 'fade_pop' | 'typewriter' | 'slide_up';
+  };
+}
+
+export interface AudioDuckingConfig {
+  id: string;
+  bgmFile?: File;
+  bgmUrl?: string;
+  baseVolume: number;       // e.g. 0.70
+  duckedVolume: number;     // e.g. 0.15
+  rampDownTime: number;     // e.g. 0.2s
+  rampUpTime: number;       // e.g. 0.4s
+  duckOnSpeech: boolean;
+  duckKeywords: string[];
+  duckSpans?: {
+    id: string;
+    start: number;
+    end: number;
+    anchorWordIdStart?: string;
+    anchorWordIdEnd?: string;
+  }[];
+}
+
+/**
+ * Dynamically derives timeline bounds from active, non-deleted word tokens.
+ * Automatically shifts bounds whenever preceding filler words or pauses are purged.
+ */
+export function deriveAnchoredBounds(
+  anchorWordIdStart: string,
+  anchorWordIdEnd: string,
+  tokens: readonly WordToken[],
+  fallbackStart = 0,
+  fallbackEnd = 4
+): { timelineStart: number; timelineEnd: number; isVisible: boolean } {
+  if (tokens.length === 0) {
+    return { timelineStart: fallbackStart, timelineEnd: fallbackEnd, isVisible: true };
+  }
+
+  const startIdx = tokens.findIndex(t => t.id === anchorWordIdStart);
+  const endIdx = tokens.findIndex(t => t.id === anchorWordIdEnd);
+
+  if (startIdx === -1 && endIdx === -1) {
+    return { timelineStart: fallbackStart, timelineEnd: fallbackEnd, isVisible: true };
+  }
+
+  const i1 = startIdx !== -1 ? startIdx : Math.max(0, endIdx);
+  const i2 = endIdx !== -1 ? endIdx : Math.min(tokens.length - 1, startIdx);
+  const minIdx = Math.min(i1, i2);
+  const maxIdx = Math.max(i1, i2);
+
+  // Filter to active non-deleted tokens in this anchored span
+  const activeTokensInSpan = tokens.slice(minIdx, maxIdx + 1).filter(t => !t.deleted);
+
+  if (activeTokensInSpan.length === 0) {
+    // All anchored words were purged!
+    return { timelineStart: fallbackStart, timelineEnd: fallbackEnd, isVisible: false };
+  }
+
+  const firstToken = activeTokensInSpan[0]!;
+  const lastToken = activeTokensInSpan[activeTokensInSpan.length - 1]!;
+
+  return {
+    timelineStart: Number(firstToken.start),
+    timelineEnd: Number(lastToken.end),
+    isVisible: true,
+  };
+}

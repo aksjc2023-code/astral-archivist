@@ -19,6 +19,7 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
   children,
   className = '',
   disabled,
+  style: customStyle,
   ...props
 }) => {
   // Base Pill Styles
@@ -55,6 +56,7 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
           color: '#FFFFFF',
           border: 'none',
           boxShadow: '0 2px 8px rgba(22, 139, 255, 0.25)',
+          ...customStyle,
         }}
         onMouseEnter={e => {
           if (!disabled) (e.currentTarget as HTMLElement).style.backgroundColor = '#329AFF';
@@ -87,6 +89,7 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
           backgroundColor: '#1E2229',
           color: '#A4B0BE',
           border: '1px solid #454D5B',
+          ...customStyle,
         }}
         onMouseEnter={e => {
           if (!disabled) {
@@ -121,6 +124,7 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
           backgroundColor: 'transparent',
           color: '#FFFFFF',
           border: '1px solid #168BFF',
+          ...customStyle,
         }}
         onMouseEnter={e => {
           if (!disabled) (e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(22, 139, 255, 0.15)';

@@ -26,6 +26,9 @@ export interface TranscriptEditorViewProps {
   onSummarizeKeyPoints?: () => void;
   onAutoClean?: () => Promise<void>;
   onOpenAudioEnhancement?: () => void;
+  onInsertBRollForTokens?: (tokenIds: string[]) => void;
+  onAddTitleForTokens?: (tokenIds: string[], text: string) => void;
+  onAddDuckingForTokens?: (tokenIds: string[]) => void;
 }
 
 export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
@@ -50,6 +53,9 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   onSummarizeKeyPoints,
   onAutoClean,
   onOpenAudioEnhancement,
+  onInsertBRollForTokens,
+  onAddTitleForTokens,
+  onAddDuckingForTokens,
 }) => {
   const [showMediaDropdown, setShowMediaDropdown] = useState(false);
   const activeAsset = mediaAssets?.find(a => a.id === activeMediaId);
@@ -504,8 +510,17 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               icon={<IconWand size={14} color="#FFFFFF" />}
               onClick={onOpenAudioEnhancement}
               style={{
+                borderRadius: '9999px',
+                padding: '5px 14px',
+                fontSize: '11px',
+                fontWeight: 600,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
                 background: 'linear-gradient(135deg, #168BFF 0%, #0052CC 100%)',
                 boxShadow: '0 2px 8px rgba(22, 139, 255, 0.35)',
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
               title="5-Stage Speech Cleansing: DeepFilterNet3 + Silero VAD + fdt-disfluency-tiny-4m"
             >
@@ -729,6 +744,121 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
         </div>
       )}
 
+      {/* Floating Keyword Context Action Toolbar (Phase 2) */}
+      {selectedTokenIds.size > 0 && (
+        <div
+          id="transcript-keyword-toolbar"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            backgroundColor: '#1E232B',
+            border: '1px solid #3867D6',
+            borderRadius: '10px',
+            padding: '8px 14px',
+            marginBottom: '12px',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.6), 0 0 12px rgba(56, 103, 214, 0.4)',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: '#93C5FD', fontWeight: 700 }}>
+            <span>✨ Keyword Selection ({selectedTokenIds.size} words):</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => onInsertBRollForTokens?.(Array.from(selectedTokenIds))}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#273C75',
+              color: '#FFFFFF',
+              border: '1px solid #487EB0',
+              borderRadius: '9999px',
+              padding: '4px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            title="Bind a B-Roll overlay directly to these spoken keywords"
+          >
+            <span>🎬</span> + Insert B-Roll
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              const selectedTokensList = tokens.filter(t => selectedTokenIds.has(t.id));
+              const selectedText = selectedTokensList.map(t => t.text).join(' ');
+              onAddTitleForTokens?.(Array.from(selectedTokenIds), selectedText);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#574B90',
+              color: '#FFFFFF',
+              border: '1px solid #786FA6',
+              borderRadius: '9999px',
+              padding: '4px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            title="Create a kinetic lower-third or title card anchored to these words"
+          >
+            <span>🔤</span> + Add Title / Lower Third
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onAddDuckingForTokens?.(Array.from(selectedTokenIds))}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: '#1E3799',
+              color: '#FFFFFF',
+              border: '1px solid #4A69BD',
+              borderRadius: '9999px',
+              padding: '4px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              transition: 'all 0.15s ease',
+            }}
+            title="Duck background audio during this keyword span"
+          >
+            <span>🔉</span> + Duck Audio Here
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCutSelected}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              backgroundColor: 'rgba(235, 59, 90, 0.15)',
+              color: '#FF6B81',
+              border: '1px solid #EB3B5A',
+              borderRadius: '9999px',
+              padding: '4px 12px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginLeft: 'auto',
+            }}
+            title="Ripple cut selected words"
+          >
+            <span>✂️</span> Cut Words
+          </button>
+        </div>
+      )}
+
       {/* Interactive Word Token Flow */}
       {tokens.length > 0 && (
       <div
@@ -741,6 +871,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
           fontSize: '15px',
           userSelect: 'none',
           minHeight: '200px',
+          contentVisibility: 'auto',
         }}
       >
         {tokens.map((token) => {

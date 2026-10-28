@@ -11,3 +11,8 @@ export * from './mockData';
 export * from './timelineDragService';
 export * from './modelCacheService';
 export * from './audioEnhancementService';
+export * from './audioDuckingEngine';
+export * from './fastPcmAnalyzer';
+export * from './fastTimelineCursor';
+export * from './dualDecoderPool';
+
