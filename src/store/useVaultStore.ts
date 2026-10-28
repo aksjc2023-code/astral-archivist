@@ -15,6 +15,7 @@ interface VaultState {
   selectRecording: (item: VaultItem | null) => void;
   renameRecording: (id: string, newTitle: string) => Promise<void>;
   deleteRecording: (id: string) => Promise<void>;
+  deleteAllRecordings: () => Promise<void>;
 }
 
 export const useVaultStore = create<VaultState>((set) => ({
@@ -78,6 +79,24 @@ export const useVaultStore = create<VaultState>((set) => ({
       }
     } catch (err) {
       set({ error: String(err) });
+    }
+  },
+
+  deleteAllRecordings: async () => {
+    try {
+      set({ isLoading: true, error: null });
+      await invoke('delete_all_vault_recordings');
+      set({
+        recordings: [],
+        selectedItem: null,
+        isLoading: false,
+      });
+
+      // Permanently erase any loaded project from the timeline
+      const timelineState = useTimelineStore.getState();
+      timelineState.clearEdl();
+    } catch (err) {
+      set({ error: String(err), isLoading: false });
     }
   },
 }));

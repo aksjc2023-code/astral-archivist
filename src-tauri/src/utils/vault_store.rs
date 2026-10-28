@@ -125,6 +125,30 @@ impl VaultStore {
         conn.execute("DELETE FROM recordings WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    pub fn delete_all(&self) -> AppResult<usize> {
+        let conn = Connection::open(&self.db_path)?;
+        // 1. Delete all physical recording and thumbnail files on disk
+        let mut stmt = conn.prepare("SELECT filepath, thumbnail_path FROM recordings")?;
+        let rows = stmt.query_map([], |row| {
+            let fp: String = row.get(0)?;
+            let tp: String = row.get(1)?;
+            Ok((fp, tp))
+        })?;
+
+        let mut count = 0;
+        for row in rows {
+            if let Ok((fp, tp)) = row {
+                let _ = fs::remove_file(fp);
+                let _ = fs::remove_file(tp);
+                count += 1;
+            }
+        }
+
+        // 2. Clear all rows from database
+        conn.execute("DELETE FROM recordings", [])?;
+        Ok(count)
+    }
 }
 
 fn dirs_fallback() -> PathBuf {

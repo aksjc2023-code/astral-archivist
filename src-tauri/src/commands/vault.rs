@@ -18,3 +18,9 @@ pub async fn delete_recording(id: String) -> Result<(), String> {
     let vault = VaultStore::new().map_err(|e| e.to_string())?;
     vault.delete(&id).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn delete_all_vault_recordings() -> Result<usize, String> {
+    let vault = VaultStore::new().map_err(|e| e.to_string())?;
+    vault.delete_all().map_err(|e| e.to_string())
+}

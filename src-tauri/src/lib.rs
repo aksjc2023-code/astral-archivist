@@ -19,6 +19,7 @@ pub fn run() {
             commands::vault::get_vault_recordings,
             commands::vault::rename_recording,
             commands::vault::delete_recording,
+            commands::vault::delete_all_vault_recordings,
             // Media commands
             commands::media::read_thumbnail_base64,
             commands::media::read_media_bytes,

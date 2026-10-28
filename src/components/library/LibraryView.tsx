@@ -27,7 +27,7 @@ interface LibraryViewProps {
 }
 
 export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenInEditor }) => {
-  const { recordings, selectedItem, fetchRecordings, renameRecording, deleteRecording, isLoading } =
+  const { recordings, selectedItem, fetchRecordings, renameRecording, deleteRecording, deleteAllRecordings, isLoading } =
     useVaultStore();
 
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -37,6 +37,8 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenIn
   const [thumbMap, setThumbMap] = useState<Record<string, string>>({});
   const [activeReviewItem, setActiveReviewItem] = useState<VaultItem | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState<boolean>(false);
+  const [isDeletingAll, setIsDeletingAll] = useState<boolean>(false);
 
   useEffect(() => {
     fetchRecordings();
@@ -111,6 +113,16 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenIn
       } finally {
         setDeletingId(null);
       }
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    setIsDeletingAll(true);
+    try {
+      await deleteAllRecordings();
+      setShowDeleteAllModal(false);
+    } finally {
+      setIsDeletingAll(false);
     }
   };
 
@@ -207,6 +219,19 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenIn
             <span>Audio ({audioCount})</span>
           </button>
         </div>
+
+        {/* Delete All Button (Only active when recordings exist) */}
+        {recordings.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowDeleteAllModal(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-red-500/40 bg-red-950/30 px-3 py-1.5 text-xs font-semibold text-red-400 hover:bg-red-900/50 hover:border-red-500 hover:text-red-200 transition-all shadow-sm shadow-red-950/20 active:scale-95"
+            title="Permanently delete all videos and audio recordings from the Vault"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>Delete All ({recordings.length})</span>
+          </button>
+        )}
       </div>
 
       {/* Grid of Recordings */}
@@ -409,6 +434,61 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onGoToStudio, onOpenIn
           item={activeReviewItem}
           onClose={() => setActiveReviewItem(null)}
         />
+      )}
+
+      {/* Delete All Confirmation Modal */}
+      {showDeleteAllModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="w-full max-w-md rounded-2xl border border-red-500/40 bg-slate-950 p-6 shadow-2xl flex flex-col gap-4 animate-scaleUp">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-500/50 bg-red-950/50 text-red-400">
+                <Trash2 className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-100">
+                  Delete All Recordings?
+                </h3>
+                <p className="text-xs text-red-400 mt-0.5 font-medium">
+                  Irreversible Vault Purge
+                </p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed border-y border-slate-800/80 py-3">
+              This will permanently delete <span className="font-bold text-white">{recordings.length} recording{recordings.length > 1 ? 's' : ''}</span> (including all videos, audio voiceovers, and frame thumbnails) from your local drive. This action cannot be undone.
+            </p>
+
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowDeleteAllModal(false)}
+                disabled={isDeletingAll}
+                className="rounded-lg border border-slate-700/60 bg-slate-900/60 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800 hover:text-white transition-all disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDeleteAll}
+                disabled={isDeletingAll}
+                className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 transition-all shadow-lg shadow-red-600/30 active:scale-95 disabled:opacity-50"
+              >
+                {isDeletingAll ? (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                    <span>Purging Vault...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span>Yes, Delete All</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
