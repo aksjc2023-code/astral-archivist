@@ -34,10 +34,24 @@ export const useProjectionStore = create<ProjectionState>((set, get) => {
   }
 
   const broadcast = (state: Partial<AstralProjectionConfig>) => {
-    channel?.postMessage({
-      type: 'SYNC_PROJECTION',
-      payload: state,
-    });
+    try {
+      const serializable: AstralProjectionConfig = {
+        isEnabled: state.isEnabled ?? false,
+        deviceId: state.deviceId ?? '',
+        normX: state.normX ?? 0.88,
+        normY: state.normY ?? 0.84,
+        normDiameter: state.normDiameter ?? 0.14,
+        isMirrored: state.isMirrored ?? true,
+        maskShape: state.maskShape ?? 'mandala',
+        snapPreset: state.snapPreset ?? 'bottom-right',
+      };
+      channel?.postMessage({
+        type: 'SYNC_PROJECTION',
+        payload: serializable,
+      });
+    } catch (err) {
+      console.warn('BroadcastChannel projection sync error:', err);
+    }
   };
 
   return {

@@ -62,10 +62,20 @@ export const useRecorderStore = create<RecorderState>((set, get) => {
   }
 
   const broadcastState = (patch: Partial<RecorderState>) => {
-    recorderChannel?.postMessage({
-      type: 'SYNC_RECORDER_STATE',
-      payload: patch,
-    });
+    try {
+      const serializable: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(patch)) {
+        if (typeof v !== 'function') {
+          serializable[k] = v;
+        }
+      }
+      recorderChannel?.postMessage({
+        type: 'SYNC_RECORDER_STATE',
+        payload: serializable,
+      });
+    } catch (err) {
+      console.warn('BroadcastChannel recorder sync error:', err);
+    }
   };
 
   return {

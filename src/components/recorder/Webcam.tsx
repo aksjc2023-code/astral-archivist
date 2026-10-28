@@ -1,5 +1,5 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Camera, CameraOff, SwitchCamera, FlipHorizontal, Shapes, LayoutGrid } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Camera, CameraOff, SwitchCamera, FlipHorizontal, Shapes, LayoutGrid, Check } from 'lucide-react';
 import { useRecorderStore } from '../../store/useRecorderStore';
 import { useProjectionStore } from '../../store/useProjectionStore';
 import type { ProjectionMaskShape, ProjectionSnapPreset } from '../../types/ipc';
@@ -19,12 +19,15 @@ export const Webcam: React.FC = () => {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>('');
   const [size, setSize] = useState<number>(DEFAULT_SIZE);
   const [showSnapMenu, setShowSnapMenu] = useState<boolean>(false);
+  const [showCameraMenu, setShowCameraMenu] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
   const [pos, setPos] = useState(() => {
     const w = typeof window !== 'undefined' ? window.innerWidth : 1280;
     const h = typeof window !== 'undefined' ? window.innerHeight : 800;
     return {
       x: Math.max(20, Math.round(w * normX - DEFAULT_SIZE / 2)),
-      y: Math.max(20, Math.round(h * normY - DEFAULT_SIZE / 2)),
+      y: Math.max(72, Math.round(h * normY - DEFAULT_SIZE / 2)),
     };
   });
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -33,14 +36,31 @@ export const Webcam: React.FC = () => {
 
   const dragStartRef = useRef({ startX: 0, startY: 0, posX: 0, posY: 0 });
   const resizeStartRef = useRef({ centerX: 0, centerY: 0, startDist: 0, startSize: DEFAULT_SIZE });
+  const toastTimeoutRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    navigator.mediaDevices?.enumerateDevices().then((devList) => {
+  const showToast = (msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = window.setTimeout(() => setToastMessage(null), 2000);
+  };
+
+  const refreshDevices = async () => {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devList = await navigator.mediaDevices.enumerateDevices();
       const videoDevs = devList.filter((d) => d.kind === 'videoinput');
       setDevices(videoDevs);
-      const preferred = videoDevs.find((d) => !d.label.toLowerCase().includes('droidcam')) ?? videoDevs[0];
-      if (preferred) setSelectedDeviceId(preferred.deviceId);
-    }).catch(console.warn);
+      if (videoDevs.length > 0 && !selectedDeviceId) {
+        const preferred = videoDevs.find((d) => !d.label.toLowerCase().includes('droidcam')) ?? videoDevs[0];
+        setSelectedDeviceId(preferred.deviceId);
+      }
+    } catch (err) {
+      console.warn('Enumerate video devices error:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshDevices();
   }, []);
 
   useEffect(() => {
@@ -52,10 +72,14 @@ export const Webcam: React.FC = () => {
     };
 
     if (isCameraOn) {
-      const constraints = {
-        video: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : { width: { ideal: 640 }, height: { ideal: 640 } },
+      refreshDevices();
+      const constraints: MediaStreamConstraints = {
+        video: selectedDeviceId
+          ? { deviceId: { ideal: selectedDeviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+          : { width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       };
+
       navigator.mediaDevices?.getUserMedia(constraints).then((stream) => {
         if (!isMounted) return stream.getTracks().forEach((t) => t.stop());
         streamRef.current = stream;
@@ -63,7 +87,19 @@ export const Webcam: React.FC = () => {
           videoRef.current.srcObject = stream;
           videoRef.current.play().catch(() => {});
         }
-      }).catch(console.warn);
+        refreshDevices();
+      }).catch((err) => {
+        console.warn('Camera access error:', err);
+        // Fallback to basic video constraint if ideal device failed
+        navigator.mediaDevices?.getUserMedia({ video: true, audio: false }).then((stream) => {
+          if (!isMounted) return stream.getTracks().forEach((t) => t.stop());
+          streamRef.current = stream;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => {});
+          }
+        }).catch(console.warn);
+      });
     } else {
       stopHardware();
     }
@@ -72,9 +108,20 @@ export const Webcam: React.FC = () => {
 
   const cycleCamera = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (devices.length <= 1) return;
-    const idx = devices.findIndex((d) => d.deviceId === selectedDeviceId);
-    setSelectedDeviceId(devices[(idx + 1) % devices.length].deviceId);
+    if (!isCameraOn) {
+      setIsCameraOn(true);
+    }
+
+    if (devices.length <= 1) {
+      showToast('Camera active (Single device found)');
+      return;
+    }
+
+    const currentIdx = devices.findIndex((d) => d.deviceId === selectedDeviceId);
+    const nextIdx = (currentIdx + 1) % devices.length;
+    const nextDev = devices[nextIdx];
+    setSelectedDeviceId(nextDev.deviceId);
+    showToast(`Switched: ${nextDev.label || `Camera ${nextIdx + 1}`}`);
   };
 
   const handlePointerHover = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -111,7 +158,7 @@ export const Webcam: React.FC = () => {
         const maxH = window.innerHeight - size - 10;
         setPos({
           x: Math.min(maxW, Math.max(10, dragStartRef.current.posX + (e.clientX - dragStartRef.current.startX))),
-          y: Math.min(maxH, Math.max(10, dragStartRef.current.posY + (e.clientY - dragStartRef.current.startY))),
+          y: Math.min(maxH, Math.max(64, dragStartRef.current.posY + (e.clientY - dragStartRef.current.startY))),
         });
       }
     };
@@ -138,22 +185,52 @@ export const Webcam: React.FC = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const s = size;
+    const margin = 24;
+    const topMargin = 72; // Below the top navbar
+
     let nextX = pos.x;
     let nextY = pos.y;
-    if (preset === 'top-left') { nextX = 24; nextY = 24; }
-    else if (preset === 'top-right') { nextX = w - s - 24; nextY = 24; }
-    else if (preset === 'bottom-left') { nextX = 24; nextY = h - s - 24; }
-    else if (preset === 'bottom-right') { nextX = w - s - 24; nextY = h - s - 24; }
-    else if (preset === 'center') { nextX = Math.round((w - s) / 2); nextY = Math.round((h - s) / 2); }
+    if (preset === 'top-left') {
+      nextX = margin;
+      nextY = topMargin;
+    } else if (preset === 'top-right') {
+      nextX = w - s - margin;
+      nextY = topMargin;
+    } else if (preset === 'bottom-left') {
+      nextX = margin;
+      nextY = h - s - margin;
+    } else if (preset === 'bottom-right') {
+      nextX = w - s - margin;
+      nextY = h - s - margin;
+    } else if (preset === 'center') {
+      nextX = Math.round((w - s) / 2);
+      nextY = Math.round((h - s) / 2);
+    }
+
     setPos({ x: nextX, y: nextY });
+    updateProjection({
+      normX: (nextX + s / 2) / w,
+      normY: (nextY + s / 2) / h,
+      normDiameter: s / w,
+      snapPreset: preset,
+    });
     setShowSnapMenu(false);
+    showToast(`Snapped to ${preset.replace('-', ' ').toUpperCase()}`);
   };
 
   const cycleMaskShape = (e: React.MouseEvent) => {
     e.stopPropagation();
     const shapes: ProjectionMaskShape[] = ['mandala', 'hexagon', 'rounded'];
     const nextIdx = (shapes.indexOf(maskShape) + 1) % shapes.length;
-    setMaskShape(shapes[nextIdx]);
+    const nextShape = shapes[nextIdx];
+    setMaskShape(nextShape);
+
+    const labels: Record<ProjectionMaskShape, string> = {
+      mandala: 'Shape: Mandala Circle',
+      hexagon: 'Shape: Hexagonal Ward',
+      rounded: 'Shape: Rounded Screen',
+    };
+    showToast(labels[nextShape]);
   };
 
   // When recording is active and camera is OFF, omit overlay completely from screen capture
@@ -162,25 +239,71 @@ export const Webcam: React.FC = () => {
   }
 
   const cursorClass = isResizing || isHoverBoundary ? 'cursor-nwse-resize' : isDragging ? 'cursor-grabbing' : 'cursor-grab';
-  const shapeClass = maskShape === 'rounded' ? 'rounded-3xl' : 'rounded-full';
+
+  // Geometry styles for shapes
+  const isHexagon = maskShape === 'hexagon';
+  const isRounded = maskShape === 'rounded';
+
+  const shapeWrapperStyle: React.CSSProperties = {
+    width: `${size}px`,
+    height: `${size}px`,
+    clipPath: isHexagon
+      ? 'polygon(50% 0%, 93.3% 25%, 93.3% 75%, 50% 100%, 6.7% 75%, 6.7% 25%)'
+      : undefined,
+  };
+
+  const shapeBorderRadius = isHexagon
+    ? undefined
+    : isRounded
+    ? 'rounded-3xl'
+    : 'rounded-full';
 
   return (
     <div style={{ left: `${pos.x}px`, top: `${pos.y}px` }} className="fixed z-50 flex flex-col items-center select-none">
       <div className="group relative flex items-center justify-center">
+        {/* Main Astral Projection Display */}
         <div
           onMouseMove={handlePointerHover}
           onMouseDown={handleMouseDown}
-          style={{ width: `${size}px`, height: `${size}px`, backgroundImage: `url(${mandalaBg})` }}
-          className={`relative flex items-center justify-center overflow-hidden ${shapeClass} bg-cover bg-center shadow-2xl transition-transform hover:scale-[1.01] ${cursorClass}`}
+          style={{ ...shapeWrapperStyle, backgroundImage: `url(${mandalaBg})` }}
+          className={`relative flex items-center justify-center overflow-hidden ${shapeBorderRadius ?? ''} bg-cover bg-center shadow-2xl transition-all hover:scale-[1.01] ${cursorClass}`}
           title={isHoverBoundary ? 'Drag boundary to resize' : 'Drag inside boundary to move'}
         >
-          <div className={`absolute inset-0 ${shapeClass} transition-all pointer-events-none ${
-            isHoverBoundary || isResizing ? 'border-4 border-dashed border-amber-400 scale-[0.98]' : 'border-4 border-amber-500/80 ring-4 ring-amber-500/30'
-          }`} />
+          {/* Hexagon Border SVG Overlay */}
+          {isHexagon ? (
+            <svg
+              className="absolute inset-0 h-full w-full pointer-events-none"
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+            >
+              <polygon
+                points="50,1 93.3,25 93.3,75 50,99 6.7,75 6.7,25"
+                fill="none"
+                stroke="#f59e0b"
+                strokeWidth="3.5"
+                className="drop-shadow-[0_0_8px_rgba(245,158,11,0.6)]"
+              />
+              <polygon
+                points="50,4 90.3,27 90.3,73 50,96 9.7,73 9.7,27"
+                fill="none"
+                stroke="rgba(251,191,36,0.4)"
+                strokeWidth="1"
+              />
+            </svg>
+          ) : (
+            <div className={`absolute inset-0 ${shapeBorderRadius} transition-all pointer-events-none ${
+              isHoverBoundary || isResizing
+                ? 'border-4 border-dashed border-amber-400 scale-[0.98]'
+                : 'border-4 border-amber-500/80 ring-4 ring-amber-500/30'
+            }`} />
+          )}
+
+          {/* Spinning golden runes for Mandala mode */}
           {maskShape === 'mandala' && (
             <div className="absolute inset-0 rounded-full border-2 border-amber-400/30 animate-spin-slow pointer-events-none" />
           )}
 
+          {/* Live Video Feed */}
           {isCameraOn && (
             <video
               ref={videoRef}
@@ -194,59 +317,152 @@ export const Webcam: React.FC = () => {
           )}
         </div>
 
-        {/* Floating Astral Dock */}
+        {/* Temporary Notification Toast */}
+        {toastMessage && (
+          <div className="absolute -bottom-8 z-40 whitespace-nowrap rounded-full border border-amber-500/60 bg-slate-950/95 px-3 py-0.5 text-[10px] font-bold text-astral-amber shadow-xl backdrop-blur-md animate-fadeIn">
+            {toastMessage}
+          </div>
+        )}
+
+        {/* Floating Astral Dock Toolbar */}
         <div
-          className="absolute -top-5 z-30 flex items-center gap-1.5 rounded-full border border-amber-500/60 bg-slate-950/95 px-3 py-1 text-xs text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity shadow-2xl backdrop-blur-md"
+          className="absolute -top-6 z-30 flex items-center gap-1.5 rounded-full border border-amber-500/60 bg-slate-950/95 px-3 py-1 text-xs text-slate-200 opacity-0 group-hover:opacity-100 transition-opacity shadow-2xl backdrop-blur-md"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* Quick Corner Snap Dropdown / Button */}
+          {/* 1. Quick Corner Snap Menu */}
           <div className="relative">
             <button
-              onClick={() => setShowSnapMenu(!showSnapMenu)}
-              className="p-1 hover:text-astral-amber rounded transition-colors"
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowCameraMenu(false);
+                setShowSnapMenu(!showSnapMenu);
+              }}
+              className={`p-1 rounded transition-colors ${showSnapMenu ? 'text-astral-amber bg-amber-500/20' : 'hover:text-astral-amber'}`}
               title="Snap to corner preset"
             >
               <LayoutGrid className="h-3.5 w-3.5" />
             </button>
             {showSnapMenu && (
-              <div className="absolute top-7 left-0 z-40 flex flex-col gap-1 rounded-xl border border-amber-500/40 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur-lg w-28 text-[11px]">
-                <button onClick={() => snapTo('top-left')} className="px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber">Top-Left</button>
-                <button onClick={() => snapTo('top-right')} className="px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber">Top-Right</button>
-                <button onClick={() => snapTo('bottom-left')} className="px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber">Bottom-Left</button>
-                <button onClick={() => snapTo('bottom-right')} className="px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber">Bottom-Right</button>
-                <button onClick={() => snapTo('center')} className="px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber">Center</button>
+              <div
+                className="absolute top-8 left-0 z-50 flex flex-col gap-1 rounded-xl border border-amber-500/50 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur-xl w-32 text-[11px]"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                {(['top-left', 'top-right', 'bottom-left', 'bottom-right', 'center'] as const).map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      snapTo(preset);
+                    }}
+                    className="flex items-center justify-between px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber transition-colors"
+                  >
+                    <span className="capitalize">{preset.replace('-', ' ')}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Mask Shape Toggle */}
+          {/* 2. Mask Shape Toggle */}
           <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={cycleMaskShape}
             className="p-1 hover:text-astral-amber rounded transition-colors"
-            title={`Cycle shape (current: ${maskShape})`}
+            title={`Cycle shape (Current: ${maskShape})`}
           >
             <Shapes className="h-3.5 w-3.5" />
           </button>
 
-          {/* Mirror Flip Toggle */}
+          {/* 3. Mirror Flip Toggle */}
           <button
-            onClick={(e) => { e.stopPropagation(); toggleMirror(); }}
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleMirror();
+              showToast(isMirrored ? 'Mirror: Normal' : 'Mirror: Flipped');
+            }}
             className={`p-1 rounded transition-colors ${isMirrored ? 'text-astral-amber' : 'text-slate-400 hover:text-slate-200'}`}
             title="Toggle horizontal mirror"
           >
             <FlipHorizontal className="h-3.5 w-3.5" />
           </button>
 
-          {/* Device Cycle */}
-          {devices.length > 1 && (
-            <button onClick={cycleCamera} className="p-1 hover:text-astral-amber" title="Switch camera">
+          {/* 4. Camera Switcher / Device Cycle */}
+          <div className="relative">
+            <button
+              type="button"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={cycleCamera}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setShowSnapMenu(false);
+                setShowCameraMenu(!showCameraMenu);
+              }}
+              className="p-1 hover:text-astral-amber rounded transition-colors"
+              title={devices.length > 1 ? 'Switch camera (Left-click cycle, Right-click list)' : 'Switch camera / turn on'}
+            >
               <SwitchCamera className="h-3.5 w-3.5" />
             </button>
-          )}
 
-          {/* Camera ON/OFF */}
+            {/* Optional Camera List Menu on Right Click or Multiple Devices */}
+            {showCameraMenu && devices.length > 0 && (
+              <div
+                className="absolute top-8 right-0 z-50 flex flex-col gap-1 rounded-xl border border-amber-500/50 bg-slate-950/95 p-1.5 shadow-2xl backdrop-blur-xl w-48 text-[11px]"
+                onMouseDown={(e) => e.stopPropagation()}
+              >
+                <div className="px-2 py-0.5 text-[10px] uppercase font-bold text-slate-400 border-b border-slate-800">
+                  Select Video Input
+                </div>
+                {devices.map((d, idx) => {
+                  const isCurrent = d.deviceId === selectedDeviceId;
+                  return (
+                    <button
+                      key={d.deviceId || idx}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedDeviceId(d.deviceId);
+                        if (!isCameraOn) setIsCameraOn(true);
+                        setShowCameraMenu(false);
+                        showToast(`Camera: ${d.label || `Device ${idx + 1}`}`);
+                      }}
+                      className={`flex items-center justify-between px-2 py-1 text-left rounded hover:bg-amber-500/20 hover:text-astral-amber transition-colors ${
+                        isCurrent ? 'text-astral-amber font-semibold' : 'text-slate-300'
+                      }`}
+                    >
+                      <span className="truncate">{d.label || `Camera ${idx + 1}`}</span>
+                      {isCurrent && <Check className="h-3 w-3 text-astral-amber shrink-0 ml-1" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* 5. Camera ON/OFF */}
           <button
-            onClick={(e) => { e.stopPropagation(); setIsCameraOn(!isCameraOn); }}
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              const next = !isCameraOn;
+              setIsCameraOn(next);
+              showToast(next ? 'Webcam Activated' : 'Webcam Deactivated');
+            }}
             className="p-1 hover:text-astral-amber flex items-center gap-1 font-semibold"
             title={isCameraOn ? 'Turn Camera Off' : 'Turn Camera On'}
           >
