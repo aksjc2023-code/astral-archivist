@@ -9,7 +9,7 @@ export const Deck: React.FC = () => {
   const {
     sources, selectedSourceId, selectSource, fetchSources,
     config, isRecording, isPaused, durationMs, error, isLoading,
-    isCameraOn, toggleCamera, updateConfig,
+    isCameraOn, toggleCamera, updateConfig, setMicLevelDb,
     startRecording, startVoiceOnlyRecording, pauseRecording, resumeRecording, stopRecording, tickDuration,
   } = useRecorderStore();
 
@@ -34,6 +34,7 @@ export const Deck: React.FC = () => {
       micPollId = window.setInterval(() => {
         const level = getMicLevelDb();
         setMicDb(level);
+        setMicLevelDb(level);
       }, 80);
     } else {
       if (timerRef.current) {
@@ -45,6 +46,7 @@ export const Deck: React.FC = () => {
         micPollId = null;
       }
       setMicDb(-100);
+      setMicLevelDb(-100);
     }
 
     return () => {
@@ -174,34 +176,57 @@ export const Deck: React.FC = () => {
           </button>
         </div>
 
-        {/* 30 FPS / 60 FPS Toggle */}
-        <div className="flex items-center gap-1 bg-slate-950/40 p-1 rounded-lg border border-slate-700/40 backdrop-blur-sm">
-          <button
-            type="button"
-            onClick={() => updateConfig({ fps: 30 })}
-            disabled={isRecording}
-            className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
-              config.fps === 30
-                ? 'bg-amber-500/20 text-astral-amber border border-amber-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="Record at 30 FPS standard"
-          >
-            30 FPS
-          </button>
-          <button
-            type="button"
-            onClick={() => updateConfig({ fps: 60 })}
-            disabled={isRecording}
-            className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
-              config.fps === 60
-                ? 'bg-amber-500/20 text-astral-amber border border-amber-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200'
-            }`}
-            title="Record at 60 FPS smooth high-framerate"
-          >
-            60 FPS
-          </button>
+        {/* Configurable Visual Fidelity: Framerate & Quality Presets */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Framerate Selector */}
+          <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-700/50 backdrop-blur-sm">
+            <span className="text-[10px] text-slate-400 uppercase font-mono px-1">FPS:</span>
+            {([24, 30, 60, 120] as const).map((rate) => (
+              <button
+                key={rate}
+                type="button"
+                onClick={() => updateConfig({ fps: rate })}
+                disabled={isRecording}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${
+                  config.fps === rate
+                    ? 'bg-amber-500/20 text-astral-amber border border-amber-500/50 shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+                title={`Record at ${rate} FPS`}
+              >
+                {rate}
+              </button>
+            ))}
+          </div>
+
+          {/* Quality Bitrate Preset Selector */}
+          <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-700/50 backdrop-blur-sm">
+            <span className="text-[10px] text-slate-400 uppercase font-mono px-1">Fidelity:</span>
+            {[
+              { label: 'Draft', bps: 3_000_000 },
+              { label: 'Std', bps: 8_000_000 },
+              { label: 'High', bps: 16_000_000 },
+              { label: 'Master', bps: 32_000_000 },
+            ].map((tier) => {
+              const active = (config.video_bitrate_bps || 12_000_000) === tier.bps;
+              return (
+                <button
+                  key={tier.label}
+                  type="button"
+                  onClick={() => updateConfig({ video_bitrate_bps: tier.bps })}
+                  disabled={isRecording}
+                  className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${
+                    active
+                      ? 'bg-amber-500/20 text-astral-amber border border-amber-500/50 shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                  title={`${tier.label} encoding bitrate (${tier.bps / 1_000_000} Mbps)`}
+                >
+                  {tier.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

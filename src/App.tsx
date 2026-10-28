@@ -209,8 +209,8 @@ export const App: React.FC = () => {
 
       {/* Floating Invisible Grimoire Teleprompter Window (A3) */}
       {showGrimoire && (
-        <div className="fixed top-20 right-6 z-40 w-96 h-[480px] rounded-2xl border-2 border-amber-500/60 shadow-2xl overflow-hidden backdrop-blur-xl">
-          <Notes />
+        <div className="fixed top-16 right-6 z-40 w-[440px] h-[580px] rounded-2xl border border-amber-500/60 shadow-2xl overflow-hidden backdrop-blur-2xl">
+          <Notes onCloseInApp={() => setShowGrimoire(false)} />
         </div>
       )}
 

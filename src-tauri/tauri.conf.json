@@ -24,8 +24,9 @@
       {
         "label": "grimoire",
         "title": "The Invisible Grimoire",
-        "width": 420,
-        "height": 600,
+        "url": "/?window=grimoire",
+        "width": 440,
+        "height": 640,
         "resizable": true,
         "alwaysOnTop": true,
         "visible": false

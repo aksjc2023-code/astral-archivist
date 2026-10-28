@@ -32,6 +32,8 @@ pub struct RecordingConfig {
     pub fps: u32,
     pub resolution_scale: f32,
     pub output_format: String,
+    #[serde(default)]
+    pub video_bitrate_bps: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

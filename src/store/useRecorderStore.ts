@@ -28,6 +28,7 @@ interface RecorderState {
   updateConfig: (patch: Partial<RecordingConfig>) => void;
   setIsCameraOn: (val: boolean) => void;
   toggleCamera: () => void;
+  setMicLevelDb: (db: number) => void;
   startRecording: () => Promise<void>;
   startVoiceOnlyRecording: () => Promise<void>;
   pauseRecording: () => Promise<void>;
@@ -36,27 +37,59 @@ interface RecorderState {
   tickDuration: (deltaMs: number) => void;
 }
 
-export const useRecorderStore = create<RecorderState>((set, get) => ({
-  sources: [],
-  selectedSourceId: 'monitor_0',
-  config: {
-    source_id: 'monitor_0',
-    target_type: 'monitor',
-    include_microphone: true,
-    include_system_audio: true,
-    fps: 60,
-    resolution_scale: 1.0,
-    output_format: 'mp4',
-  },
-  session: null,
-  isRecording: false,
-  isPaused: false,
-  durationMs: 0,
-  micLevelDb: -42,
-  latestItem: null,
-  error: null,
-  isLoading: false,
-  isCameraOn: false,
+const recorderChannel = typeof window !== 'undefined' && 'BroadcastChannel' in window
+  ? new BroadcastChannel('astral-archivist-recorder')
+  : null;
+
+export const useRecorderStore = create<RecorderState>((set, get) => {
+  if (recorderChannel) {
+    recorderChannel.onmessage = (event) => {
+      const { type, payload } = event.data || {};
+      if (type === 'SYNC_RECORDER_STATE') {
+        set((state) => ({ ...state, ...payload }));
+      } else if (type === 'CMD_START_RECORDING') {
+        get().startRecording();
+      } else if (type === 'CMD_PAUSE_RECORDING') {
+        get().pauseRecording();
+      } else if (type === 'CMD_RESUME_RECORDING') {
+        get().resumeRecording();
+      } else if (type === 'CMD_STOP_RECORDING') {
+        get().stopRecording();
+      } else if (type === 'CMD_TOGGLE_CAMERA') {
+        get().toggleCamera();
+      }
+    };
+  }
+
+  const broadcastState = (patch: Partial<RecorderState>) => {
+    recorderChannel?.postMessage({
+      type: 'SYNC_RECORDER_STATE',
+      payload: patch,
+    });
+  };
+
+  return {
+    sources: [],
+    selectedSourceId: 'monitor_0',
+    config: {
+      source_id: 'monitor_0',
+      target_type: 'monitor',
+      include_microphone: true,
+      include_system_audio: true,
+      fps: 60,
+      resolution_scale: 1.0,
+      output_format: 'mp4',
+      video_bitrate_bps: 12000000,
+    },
+    session: null,
+    isRecording: false,
+    isPaused: false,
+    durationMs: 0,
+    micLevelDb: -42,
+    latestItem: null,
+    error: null,
+    isLoading: false,
+    isCameraOn: false,
 
   fetchSources: async () => {
     try {
@@ -88,9 +121,21 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
     set((state) => ({ config: { ...state.config, ...patch } }));
   },
 
-  setIsCameraOn: (val: boolean) => set({ isCameraOn: val }),
+  setIsCameraOn: (val: boolean) => {
+    set({ isCameraOn: val });
+    broadcastState({ isCameraOn: val });
+  },
 
-  toggleCamera: () => set((state) => ({ isCameraOn: !state.isCameraOn })),
+  toggleCamera: () => {
+    const next = !get().isCameraOn;
+    set({ isCameraOn: next });
+    broadcastState({ isCameraOn: next });
+  },
+
+  setMicLevelDb: (db: number) => {
+    set({ micLevelDb: db });
+    broadcastState({ micLevelDb: db });
+  },
 
   startRecording: async () => {
     try {
@@ -108,6 +153,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
       // If user cancelled the popup or closed it, abort recording cleanly
       if (!success) {
         set({ isLoading: false, isRecording: false });
+        broadcastState({ isRecording: false, isLoading: false });
         return;
       }
 
@@ -124,8 +170,10 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
         durationMs: 0,
         isLoading: false,
       });
+      broadcastState({ isRecording: true, isPaused: false, durationMs: 0, isLoading: false });
     } catch (err) {
       set({ error: String(err), isLoading: false, isRecording: false });
+      broadcastState({ error: String(err), isLoading: false, isRecording: false });
     }
   },
 
@@ -149,6 +197,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
           isRecording: false,
           error: 'Microphone recording could not start. Please check microphone permissions in Windows Settings.',
         });
+        broadcastState({ isRecording: false, isLoading: false });
         return;
       }
 
@@ -164,13 +213,16 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
         durationMs: 0,
         isLoading: false,
       });
+      broadcastState({ isRecording: true, isPaused: false, durationMs: 0, isLoading: false });
     } catch (err) {
       set({ error: String(err), isLoading: false, isRecording: false });
+      broadcastState({ error: String(err), isLoading: false, isRecording: false });
     }
   },
 
   pauseRecording: async () => {
     set({ isPaused: true });
+    broadcastState({ isPaused: true });
     pauseRealCapture();
     try {
       await invoke('pause_recording');
@@ -181,6 +233,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
 
   resumeRecording: async () => {
     set({ isPaused: false });
+    broadcastState({ isPaused: false });
     resumeRealCapture();
     try {
       await invoke('resume_recording');
@@ -191,8 +244,8 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
 
   stopRecording: async () => {
     try {
-      // Instantly provide visual feedback: mark recording stopped immediately
       set({ isRecording: false, isPaused: false, isLoading: true, error: null });
+      broadcastState({ isRecording: false, isPaused: false, isLoading: true });
       const session = get().session;
       const durationMs = get().durationMs;
       const isAudioOnly = get().config.target_type === 'audio_only';
@@ -219,16 +272,32 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
         latestItem: item,
         isLoading: false,
       });
+      broadcastState({ session: null, durationMs: 0, isRecording: false, isLoading: false });
       return item;
     } catch (err) {
       set({ error: String(err), isLoading: false, isRecording: false, session: null });
+      broadcastState({ isRecording: false, isLoading: false, session: null });
       return null;
     }
   },
 
   tickDuration: (deltaMs: number) => {
     if (get().isRecording && !get().isPaused) {
-      set((state) => ({ durationMs: state.durationMs + deltaMs }));
+      const next = get().durationMs + deltaMs;
+      set({ durationMs: next });
+      broadcastState({ durationMs: next });
     }
   },
-}));
+};
+});
+
+export const dispatchRecorderCommand = (command: 'START' | 'PAUSE' | 'RESUME' | 'STOP' | 'TOGGLE_CAMERA') => {
+  if (recorderChannel) {
+    if (command === 'TOGGLE_CAMERA') {
+      recorderChannel.postMessage({ type: 'CMD_TOGGLE_CAMERA' });
+    } else {
+      recorderChannel.postMessage({ type: `CMD_${command}_RECORDING` });
+    }
+  }
+};
+

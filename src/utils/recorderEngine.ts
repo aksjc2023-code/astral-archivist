@@ -1,4 +1,5 @@
 import type { RecordingConfig } from '../types/ipc';
+import { getProjectionSnapshot } from '../store/useProjectionStore';
 
 let activeStream: MediaStream | null = null;
 let activeRecorder: MediaRecorder | null = null;
@@ -319,39 +320,77 @@ export const startRealCapture = async (
           // A) Draw base screen capture
           ctx.drawImage(screenVideoEl, 0, 0, w, h);
 
-          // B) Draw circular camera PiP overlay in Bottom-Right
+          // B) Draw flexible Astral Projection camera overlay with dynamic coordinates & mask
           if (cameraVideoEl.readyState >= 2) {
-            const diameter = Math.round(Math.min(Math.max(w * 0.08, 100), 140));
+            const proj = getProjectionSnapshot();
+            const diameter = Math.round(
+              Math.min(Math.max(w * (proj.normDiameter || 0.14), 100), Math.min(w * 0.45, 520))
+            );
             const radius = diameter / 2;
-            const margin = 24;
-            const cx = w - radius - margin;
-            const cy = h - radius - margin;
+            const cx = Math.max(radius + 12, Math.min(w - radius - 12, Math.round(w * proj.normX)));
+            const cy = Math.max(radius + 12, Math.min(h - radius - 12, Math.round(h * proj.normY)));
 
             ctx.save();
             ctx.shadowColor = 'rgba(245, 158, 11, 0.45)';
             ctx.shadowBlur = 14;
+
+            // Shape path based on maskShape
             ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            if (proj.maskShape === 'hexagon') {
+              for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(hx, hy);
+                else ctx.lineTo(hx, hy);
+              }
+            } else if (proj.maskShape === 'rounded') {
+              const rx = cx - radius;
+              const ry = cy - radius;
+              ctx.roundRect(rx, ry, diameter, diameter, 18);
+            } else {
+              // Mandala circle
+              ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            }
             ctx.closePath();
             ctx.clip();
 
+            // Draw video with optional horizontal mirror
             ctx.translate(cx, cy);
-            ctx.scale(-1, 1);
+            if (proj.isMirrored) {
+              ctx.scale(-1, 1);
+            }
             ctx.drawImage(cameraVideoEl, -radius, -radius, diameter, diameter);
             ctx.restore();
 
+            // Arcane golden border
             ctx.save();
             ctx.beginPath();
-            ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            if (proj.maskShape === 'hexagon') {
+              for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(hx, hy);
+                else ctx.lineTo(hx, hy);
+              }
+            } else if (proj.maskShape === 'rounded') {
+              ctx.roundRect(cx - radius, cy - radius, diameter, diameter, 18);
+            } else {
+              ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+            }
             ctx.lineWidth = 3;
             ctx.strokeStyle = '#f59e0b';
             ctx.stroke();
 
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius - 3, 0, Math.PI * 2);
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
-            ctx.stroke();
+            // Mandala inner mystical aura ring
+            if (proj.maskShape === 'mandala') {
+              ctx.beginPath();
+              ctx.arc(cx, cy, radius - 3, 0, Math.PI * 2);
+              ctx.lineWidth = 1;
+              ctx.strokeStyle = 'rgba(251, 191, 36, 0.5)';
+              ctx.stroke();
+            }
             ctx.restore();
           }
 
@@ -389,7 +428,8 @@ export const startRealCapture = async (
         }
       }
 
-      const videoBitsPerSecond = targetFps >= 60 ? 8_000_000 : 4_500_000;
+      // User-configured visual fidelity bitrate with smart framerate defaults
+      const videoBitsPerSecond = config.video_bitrate_bps || (targetFps >= 60 ? 12_000_000 : 6_000_000);
       activeRecorder = mimeType
         ? new MediaRecorder(activeStream, { mimeType, videoBitsPerSecond })
         : new MediaRecorder(activeStream, { videoBitsPerSecond });

@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 #[tauri::command]
 pub async fn set_window_capture_affinity(exclude: bool) -> Result<(), String> {
     #[cfg(target_os = "windows")]
@@ -23,3 +25,21 @@ pub async fn set_window_capture_affinity(exclude: bool) -> Result<(), String> {
     let _ = exclude;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn toggle_grimoire_window(app: tauri::AppHandle, show: bool) -> Result<bool, String> {
+    if let Some(window) = app.get_webview_window("grimoire") {
+        if show {
+            let _ = window.show();
+            let _ = window.set_focus();
+            let _ = set_window_capture_affinity(true).await;
+            Ok(true)
+        } else {
+            let _ = window.hide();
+            Ok(false)
+        }
+    } else {
+        Ok(false)
+    }
+}
+

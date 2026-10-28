@@ -19,6 +19,24 @@ export interface CaptureSource {
   height: number;
 }
 
+export type TargetFramerate = 24 | 30 | 60 | 120;
+export type TargetResolutionScale = 1.0 | 0.75 | 0.5;
+export type VideoBitrateTier = 3000000 | 8000000 | 16000000 | 32000000;
+
+export type ProjectionSnapPreset = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | 'custom';
+export type ProjectionMaskShape = 'mandala' | 'hexagon' | 'rounded';
+
+export interface AstralProjectionConfig {
+  isEnabled: boolean;
+  deviceId: string;
+  normX: number; // 0.0 - 1.0 (relative to canvas width)
+  normY: number; // 0.0 - 1.0 (relative to canvas height)
+  normDiameter: number; // 0.06 - 0.40 (relative to canvas width)
+  isMirrored: boolean;
+  maskShape: ProjectionMaskShape;
+  snapPreset: ProjectionSnapPreset;
+}
+
 export interface RecordingConfig {
   source_id: string;
   target_type: CaptureTargetType;
@@ -26,9 +44,10 @@ export interface RecordingConfig {
   microphone_device_id?: string;
   include_system_audio: boolean;
   webcam_device_id?: string;
-  fps: 30 | 60;
-  resolution_scale: 1.0 | 0.75 | 0.5;
+  fps: TargetFramerate;
+  resolution_scale: TargetResolutionScale;
   output_format: 'mp4' | 'webm';
+  video_bitrate_bps?: number;
 }
 
 export interface RecordingSession {

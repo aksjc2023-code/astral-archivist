@@ -32,6 +32,7 @@ pub fn run() {
             commands::ai::run_noise_suppression,
             // Window commands (A3 Invisible Grimoire)
             commands::window::set_window_capture_affinity,
+            commands::window::toggle_grimoire_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
