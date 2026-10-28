@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { MediaAsset } from '@astral/core';
+import { MediaAsset, setTimelineDragPayload } from '@astral/core';
 import { IconSearch, IconFilterFunnel, IconCheckmark, IconTrash } from '../common/ScarletIcons';
 
 export interface MediaGridViewProps {
@@ -141,10 +141,14 @@ export const MediaGridView: React.FC<MediaGridViewProps> = ({
             data-asset-name={asset.name}
             draggable={true}
             onDragStart={e => {
+              setTimelineDragPayload({ type: 'asset', data: asset, name: asset.name });
               e.dataTransfer.setData('application/scarlet-asset', JSON.stringify(asset));
               e.dataTransfer.setData('application/scarlet-item', JSON.stringify({ type: 'asset', data: asset, name: asset.name }));
               e.dataTransfer.setData('text/plain', asset.name);
               e.dataTransfer.effectAllowed = 'copy';
+            }}
+            onDragEnd={() => {
+              setTimelineDragPayload(null);
             }}
             onClick={() => onSelectAsset(asset)}
             onDoubleClick={() => onAddToTimeline(asset)}

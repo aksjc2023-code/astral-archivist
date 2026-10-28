@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { WordToken, MediaAsset } from '@astral/core';
 import { ScarletButton } from '../common/ScarletButton';
-import { IconSparkles } from '../common/ScarletIcons';
+import { IconSparkles, IconWand } from '../common/ScarletIcons';
 import { AutoCleanButton } from './AutoCleanButton';
 
 export interface TranscriptEditorViewProps {
@@ -25,6 +25,7 @@ export interface TranscriptEditorViewProps {
   onClearTranscriptionError?: () => void;
   onSummarizeKeyPoints?: () => void;
   onAutoClean?: () => Promise<void>;
+  onOpenAudioEnhancement?: () => void;
 }
 
 export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
@@ -48,6 +49,7 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
   onClearTranscriptionError,
   onSummarizeKeyPoints,
   onAutoClean,
+  onOpenAudioEnhancement,
 }) => {
   const [showMediaDropdown, setShowMediaDropdown] = useState(false);
   const activeAsset = mediaAssets?.find(a => a.id === activeMediaId);
@@ -491,6 +493,24 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               wordCount={tokens.filter(t => !t.deleted).length}
               onAutoClean={onAutoClean}
             />
+          )}
+
+          {onOpenAudioEnhancement && (
+            <ScarletButton
+              id="btn-open-audio-enhancement"
+              data-testid="btn-open-audio-enhancement"
+              variant="primary"
+              size="sm"
+              icon={<IconWand size={14} color="#FFFFFF" />}
+              onClick={onOpenAudioEnhancement}
+              style={{
+                background: 'linear-gradient(135deg, #168BFF 0%, #0052CC 100%)',
+                boxShadow: '0 2px 8px rgba(22, 139, 255, 0.35)',
+              }}
+              title="5-Stage Speech Cleansing: DeepFilterNet3 + Silero VAD + fdt-disfluency-tiny-4m"
+            >
+              Audio Enhancement
+            </ScarletButton>
           )}
         </div>
       </div>

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { TimelineClip, MarkerFlag, PlaybackSegment, WordToken, formatTimecode } from '@astral/core';
+import { TimelineClip, MarkerFlag, PlaybackSegment, WordToken, formatTimecode, getTimelineDragPayload } from '@astral/core';
 import {
   IconEye,
   IconLock,
@@ -92,8 +92,6 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const isDraggingRef = useRef(false);
   const playheadRef = useRef<HTMLDivElement>(null);
 
-
-
   // Ctrl + Mouse Wheel for Zoom In/Out & Trackpad horizontal scrolling
   const handleTimelineWheel = (e: React.WheelEvent<HTMLDivElement>) => {
     if (e.ctrlKey || e.metaKey) {
@@ -119,8 +117,28 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
   const [marqueeStart, setMarqueeStart] = useState<{ x: number; y: number } | null>(null);
   const [marqueeCurrent, setMarqueeCurrent] = useState<{ x: number; y: number } | null>(null);
 
-  // Drag & Drop Timeline Indicator State
-  const [dropIndicator, setDropIndicator] = useState<{ x: number; timeSec: number; trackId: string; trackName: string } | null>(null);
+  // Drag & Drop Timeline Indicator State (Premiere Pro-style Ghost Preview)
+  const [dropIndicator, setDropIndicator] = useState<{
+    x: number;
+    timeSec: number;
+    trackId: string;
+    trackName: string;
+    itemType?: string;
+    itemName?: string;
+    trackTop?: number;
+    trackHeight?: number;
+    color?: string;
+  } | null>(null);
+
+  // Real-time Trimming Feedback Tooltip state
+  const [trimmingInfo, setTrimmingInfo] = useState<{
+    clipId: string;
+    side: 'left' | 'right';
+    startSec: number;
+    durationSec: number;
+    currentSec: number;
+    trackTop?: number;
+  } | null>(null);
 
   // Hovered Clip ID for interactive left/right trim handles
   const [hoveredClipId, setHoveredClipId] = useState<string | null>(null);
@@ -203,26 +221,141 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     e.preventDefault();
     if (trackId && activeTrackStates[trackId]?.locked) return;
     const startX = e.clientX;
-    let accumulatedSec = 0;
+    const origUserSelect = document.body.style.userSelect;
+    const origCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'ew-resize';
+
+    const clip = clips.find(c => c.id === clipId);
+    const initialStart = clip ? getClipStart(clip) : 0;
+    const initialDur = clip ? getClipDuration(clip) : 4;
+    const trackTop = trackId === 'track_effects' ? 28
+      : trackId === 'track_transitions' ? 60
+      : trackId === 'track_stickers' ? 92
+      : trackId === 'track_title' ? 124
+      : trackId === 'track_captions' ? 156
+      : trackId === 'track_video' ? 186
+      : 262;
 
     const handleMouseMove = (moveEvent: MouseEvent) => {
       const deltaPx = moveEvent.clientX - startX;
-      const currentDeltaSec = Number((deltaPx / pxPerSec).toFixed(2));
-      const stepDelta = currentDeltaSec - accumulatedSec;
-      if (Math.abs(stepDelta) >= 0.05) {
-        accumulatedSec = currentDeltaSec;
-        onTrimClip?.(clipId, side, stepDelta);
+      const totalDeltaSec = Number((deltaPx / pxPerSec).toFixed(2));
+
+      let newStart = initialStart;
+      let newDur = initialDur;
+      if (side === 'left') {
+        const applied = Math.min(initialDur - 0.2, totalDeltaSec);
+        newStart = Math.max(0, initialStart + applied);
+        newDur = Math.max(0.2, initialDur - applied);
+      } else {
+        newDur = Math.max(0.2, initialDur + totalDeltaSec);
       }
+
+      setTrimmingInfo({
+        clipId,
+        side,
+        startSec: Number(newStart.toFixed(2)),
+        durationSec: Number(newDur.toFixed(2)),
+        currentSec: Number((side === 'left' ? newStart : newStart + newDur).toFixed(2)),
+        trackTop,
+      });
+
+      onTrimClip?.(clipId, side, totalDeltaSec);
+
+      // Real-time video preview scrubbing as edge is dragged
+      const seekTarget = side === 'left' ? newStart : Number((newStart + newDur).toFixed(2));
+      onSeek(seekTarget);
     };
 
     const handleMouseUp = () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = origUserSelect;
+      document.body.style.cursor = origCursor;
+      setTrimmingInfo(null);
       onClipMoveEnd?.(clipId);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  // Reusable 14px-wide Left & Right interactive trim handles with bracket grip indicators
+  const renderTrimHandles = (clip: TimelineClip, trackId: string) => {
+    const isTrackLocked = activeTrackStates[trackId]?.locked;
+    const isSelected = selectedClipIds ? selectedClipIds.includes(clip.id) : clip.id === selectedClipId;
+    const isHovered = hoveredClipId === clip.id;
+    if (isTrackLocked || (!isSelected && !isHovered)) return null;
+
+    return (
+      <>
+        {/* Left Trim Handle (In-Point & Length) */}
+        <div
+          id={`trim-left-${clip.id}`}
+          data-testid={`trim-left-${clip.id}`}
+          role="separator"
+          aria-label="Trim In-Point (Left handle)"
+          tabIndex={0}
+          title="◀ Drag left edge to adjust in-point / length"
+          onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', trackId)}
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: '14px',
+            backgroundColor: '#FFD32A',
+            cursor: 'ew-resize',
+            zIndex: 25,
+            borderRadius: '5px 0 0 5px',
+            boxShadow: '0 0 10px rgba(255, 211, 42, 0.95)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            userSelect: 'none',
+            borderRight: '1px solid rgba(0,0,0,0.5)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
+            <div style={{ width: '2px', height: '8px', backgroundColor: '#332600', borderRadius: '1px' }} />
+            <div style={{ width: '2px', height: '8px', backgroundColor: '#332600', borderRadius: '1px' }} />
+          </div>
+        </div>
+
+        {/* Right Trim Handle (Out-Point & Length) */}
+        <div
+          id={`trim-right-${clip.id}`}
+          data-testid={`trim-right-${clip.id}`}
+          role="separator"
+          aria-label="Trim Out-Point (Right handle)"
+          tabIndex={0}
+          title="Drag right edge to adjust out-point / length ▶"
+          onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', trackId)}
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: '14px',
+            backgroundColor: '#FFD32A',
+            cursor: 'ew-resize',
+            zIndex: 25,
+            borderRadius: '0 5px 5px 0',
+            boxShadow: '0 0 10px rgba(255, 211, 42, 0.95)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            userSelect: 'none',
+            borderLeft: '1px solid rgba(0,0,0,0.5)',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', alignItems: 'center' }}>
+            <div style={{ width: '2px', height: '8px', backgroundColor: '#332600', borderRadius: '1px' }} />
+            <div style={{ width: '2px', height: '8px', backgroundColor: '#332600', borderRadius: '1px' }} />
+          </div>
+        </div>
+      </>
+    );
   };
 
   // Horizontal clip dragging / timeline shift coordinator (supports batch moving selected clips)
@@ -345,7 +478,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     new Set(
       clips
         .map(c => c.trackId)
-        .filter(id => !['track_effects', 'track_stickers', 'track_title', 'track_video', 'track_audio', 'track_custom_stickers'].includes(id))
+        .filter(id => !['track_effects', 'track_transitions', 'track_stickers', 'track_title', 'track_captions', 'track_video', 'track_audio', 'track_custom_stickers'].includes(id))
     )
   ).sort();
 
@@ -392,8 +525,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         const clipLeft = startSec * pxPerSec;
         const clipRight = clipLeft + durSec * pxPerSec;
 
-        let trackTop = 156;
-        let trackBottom = 232;
+        let trackTop = 186;
+        let trackBottom = 262;
         if (clip.trackId === 'track_effects') {
           trackTop = 28;
           trackBottom = 60;
@@ -406,15 +539,18 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
         } else if (clip.trackId === 'track_title') {
           trackTop = 124;
           trackBottom = 156;
-        } else if (clip.trackId === 'track_video') {
+        } else if (clip.trackId === 'track_captions') {
           trackTop = 156;
-          trackBottom = 232;
+          trackBottom = 186;
+        } else if (clip.trackId === 'track_video') {
+          trackTop = 186;
+          trackBottom = 262;
         } else if (clip.trackId === 'track_audio') {
-          trackTop = 232;
-          trackBottom = 276;
+          trackTop = 262;
+          trackBottom = 306;
         } else {
           const customIdx = customTrackIds.indexOf(clip.trackId);
-          trackTop = 276 + (customIdx >= 0 ? customIdx : 0) * 40;
+          trackTop = 306 + (customIdx >= 0 ? customIdx : 0) * 40;
           trackBottom = trackTop + 40;
         }
 
@@ -449,13 +585,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     if (!container) return { trackId: 'track_video', trackName: 'Main Video Track' };
     const rect = container.getBoundingClientRect();
     const y = clientY - rect.top + (container.scrollTop || 0);
-    if (y < 60) return { trackId: 'track_effects', trackName: 'Effects & Filters Track' };
+    if (y < 60) return { trackId: 'track_effects', trackName: 'Filters & Effects Track' };
     if (y < 92) return { trackId: 'track_transitions', trackName: 'Transitions Track' };
     if (y < 124) return { trackId: 'track_stickers', trackName: 'Stickers & Overlays Track' };
     if (y < 156) return { trackId: 'track_title', trackName: 'Titles Track' };
-    if (y < 232) return { trackId: 'track_video', trackName: 'Main Video Track' };
-    if (y < 276) return { trackId: 'track_audio', trackName: 'Audio Track' };
-    const customIdx = Math.floor((y - 276) / 40);
+    if (y < 186) return { trackId: 'track_captions', trackName: 'Captions & Subtitles Track' };
+    if (y < 262) return { trackId: 'track_video', trackName: 'Main Video Track' };
+    if (y < 306) return { trackId: 'track_audio', trackName: 'Audio Track' };
+    const customIdx = Math.floor((y - 306) / 40);
     if (customIdx >= 0 && customIdx < customTrackIds.length) {
       const tid = customTrackIds[customIdx]!;
       return { trackId: tid, trackName: tid.replace('track_custom_', 'Track ') };
@@ -467,12 +604,72 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     const clickTime = calculateTimeFromClientX(e.clientX);
-    const { trackId, trackName } = resolveTrackFromClientY(e.clientY);
+    const dragPayload = getTimelineDragPayload();
+    let { trackId, trackName } = resolveTrackFromClientY(e.clientY);
+
+    // If an item is being dragged, lock to its dedicated track so it never drops or hovers on video track
+    let trackTop = 186;
+    let trackHeight = 76;
+    let color = '#35435B';
+
+    if (dragPayload) {
+      if (dragPayload.type === 'filters') {
+        trackId = 'track_effects';
+        trackName = 'Filters & Effects Track';
+        trackTop = 28;
+        trackHeight = 32;
+        color = '#EB3B5A';
+      } else if (dragPayload.type === 'transitions') {
+        trackId = 'track_transitions';
+        trackName = 'Transitions Track';
+        trackTop = 60;
+        trackHeight = 32;
+        color = '#FA8231';
+      } else if (dragPayload.type === 'stickers') {
+        trackId = 'track_stickers';
+        trackName = 'Stickers & Overlays Track';
+        trackTop = 92;
+        trackHeight = 32;
+        color = '#F39C12';
+      } else if (dragPayload.type === 'titles') {
+        trackId = 'track_title';
+        trackName = 'Titles Track';
+        trackTop = 124;
+        trackHeight = 32;
+        color = '#8854D0';
+      } else if (dragPayload.type === 'asset' && dragPayload.data?.type === 'audio') {
+        trackId = 'track_audio';
+        trackName = 'Audio Track';
+        trackTop = 262;
+        trackHeight = 44;
+        color = '#10AC84';
+      } else if (dragPayload.type === 'asset' && dragPayload.data?.type === 'video') {
+        trackId = 'track_video';
+        trackName = 'Main Video Track';
+        trackTop = 186;
+        trackHeight = 76;
+        color = '#35435B';
+      }
+    } else {
+      if (trackId === 'track_effects') { trackTop = 28; trackHeight = 32; color = '#EB3B5A'; }
+      else if (trackId === 'track_transitions') { trackTop = 60; trackHeight = 32; color = '#FA8231'; }
+      else if (trackId === 'track_stickers') { trackTop = 92; trackHeight = 32; color = '#F39C12'; }
+      else if (trackId === 'track_title') { trackTop = 124; trackHeight = 32; color = '#8854D0'; }
+      else if (trackId === 'track_captions') { trackTop = 156; trackHeight = 30; color = '#3867D6'; }
+      else if (trackId === 'track_video') { trackTop = 186; trackHeight = 76; color = '#35435B'; }
+      else if (trackId === 'track_audio') { trackTop = 262; trackHeight = 44; color = '#10AC84'; }
+    }
+
     setDropIndicator({
       x: clickTime * pxPerSec,
       timeSec: clickTime,
       trackId,
       trackName,
+      trackTop,
+      trackHeight,
+      color,
+      itemType: dragPayload?.type,
+      itemName: dragPayload?.name,
     });
   };
 
@@ -803,7 +1000,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
           </div>
         </div>
 
-        {/* Track 3 Header: Titles & Subtitles */}
+        {/* Track 4 Header: Titles */}
         <div
           style={{
             height: '32px',
@@ -814,26 +1011,11 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             padding: '0 6px',
             color: '#8854D0',
           }}
-          title="Titles & Subtitles / Captions Track"
+          title="Titles & Lower Thirds Track"
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-            <span style={{ fontSize: '11px' }}>💬</span>
-            <span style={{ fontSize: '10px', fontWeight: 600 }}>Captions</span>
-            {captionBlocks.length > 0 && (
-              <span
-                style={{
-                  fontSize: '8px',
-                  backgroundColor: '#8854D0',
-                  color: '#FFFFFF',
-                  borderRadius: '8px',
-                  padding: '1px 4px',
-                  fontWeight: 700,
-                  marginLeft: '2px',
-                }}
-              >
-                {captionBlocks.length}
-              </span>
-            )}
+            <span style={{ fontSize: '11px' }}>🔤</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Titles</span>
           </div>
           <div style={{ display: 'flex', gap: '2px' }}>
             <button
@@ -855,6 +1037,62 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
               style={trackBtnStyle}
             >
               <IconLock size={11} color={activeTrackStates['track_title']?.locked ? '#FFD32A' : '#636E7B'} />
+            </button>
+          </div>
+        </div>
+
+        {/* Track 5 Header: Captions & Subtitles */}
+        <div
+          style={{
+            height: '30px',
+            borderBottom: '1px solid #2B303A',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 6px',
+            color: '#3867D6',
+          }}
+          title="Transcript Subtitles & Captions Track"
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+            <span style={{ fontSize: '11px' }}>💬</span>
+            <span style={{ fontSize: '10px', fontWeight: 600 }}>Captions</span>
+            {captionBlocks.length > 0 && (
+              <span
+                style={{
+                  fontSize: '8px',
+                  backgroundColor: '#3867D6',
+                  color: '#FFFFFF',
+                  borderRadius: '8px',
+                  padding: '1px 4px',
+                  fontWeight: 700,
+                  marginLeft: '2px',
+                }}
+              >
+                {captionBlocks.length}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '2px' }}>
+            <button
+              id="btn-hide-track_captions"
+              data-testid="btn-hide-track_captions"
+              type="button"
+              title={activeTrackStates['track_captions']?.hidden ? 'Show Track' : 'Hide Track'}
+              onClick={() => toggleHidden('track_captions')}
+              style={trackBtnStyle}
+            >
+              <IconEye size={11} color={activeTrackStates['track_captions']?.hidden ? '#FF4757' : '#A4B0BE'} />
+            </button>
+            <button
+              id="btn-lock-track_captions"
+              data-testid="btn-lock-track_captions"
+              type="button"
+              title={activeTrackStates['track_captions']?.locked ? 'Unlock Track' : 'Lock Track'}
+              onClick={() => toggleLocked('track_captions')}
+              style={trackBtnStyle}
+            >
+              <IconLock size={11} color={activeTrackStates['track_captions']?.locked ? '#FFD32A' : '#636E7B'} />
             </button>
           </div>
         </div>
@@ -1208,38 +1446,181 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
             </div>
           )}
 
-          {/* Active Magnetic Drop Indicator */}
+          {/* Active Magnetic Drop Indicator & Premiere Pro-Style Ghost Preview Block */}
           {dropIndicator && (
-            <div
-              style={{
-                position: 'absolute',
-                left: `${dropIndicator.x}px`,
-                top: 0,
-                bottom: 0,
-                width: '2px',
-                backgroundColor: '#00F0FF',
-                zIndex: 40,
-                pointerEvents: 'none',
-                boxShadow: '0 0 12px #00F0FF',
-              }}
-            >
+            <>
+              {/* Full Timeline Vertical Alignment Guide Line */}
               <div
                 style={{
                   position: 'absolute',
-                  top: '32px',
-                  left: '6px',
-                  backgroundColor: '#00F0FF',
-                  color: '#0A0C10',
-                  padding: '3px 8px',
-                  borderRadius: '4px',
-                  fontSize: '10px',
-                  fontWeight: 700,
-                  whiteSpace: 'nowrap',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                  left: `${dropIndicator.x}px`,
+                  top: 0,
+                  bottom: 0,
+                  width: '2px',
+                  backgroundColor: dropIndicator.color || '#00F0FF',
+                  zIndex: 42,
+                  pointerEvents: 'none',
+                  boxShadow: `0 0 12px ${dropIndicator.color || '#00F0FF'}, 0 0 4px #FFFFFF`,
                 }}
               >
-                + Drop onto {dropIndicator.trackName} at {formatTimecode(dropIndicator.timeSec).main}
+                {/* Floating Track Placement Pill */}
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '2px',
+                    left: '6px',
+                    backgroundColor: dropIndicator.color || '#00F0FF',
+                    color: '#0A0C10',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap',
+                    boxShadow: '0 4px 14px rgba(0,0,0,0.6)',
+                    letterSpacing: '0.3px',
+                  }}
+                >
+                  + {dropIndicator.itemName ? `"${dropIndicator.itemName}"` : 'Item'} → {dropIndicator.trackName} @ {formatTimecode(dropIndicator.timeSec).main}
+                </div>
               </div>
+
+              {/* Premiere Pro-style Ghost Placement Block on Dedicated Track */}
+              {(() => {
+                const previewDur = dropIndicator.itemType === 'transitions' ? 2.0 : 4.0;
+                const previewWidth = Math.max(70, previewDur * pxPerSec);
+                const blockTop = (dropIndicator.trackTop !== undefined ? dropIndicator.trackTop : 28) + 2;
+                const blockHeight = (dropIndicator.trackHeight !== undefined ? dropIndicator.trackHeight : 32) - 4;
+                const blockColor = dropIndicator.color || '#00F0FF';
+                const typeIcon = dropIndicator.itemType === 'filters' ? '⚡'
+                  : dropIndicator.itemType === 'transitions' ? '⧉'
+                  : dropIndicator.itemType === 'stickers' ? '★'
+                  : dropIndicator.itemType === 'titles' ? '🔤'
+                  : dropIndicator.itemType === 'asset' ? '🎬'
+                  : '✨';
+
+                return (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${dropIndicator.x}px`,
+                      top: `${blockTop}px`,
+                      width: `${previewWidth}px`,
+                      height: `${blockHeight}px`,
+                      backgroundColor: `${blockColor}33`,
+                      border: `2px dashed ${blockColor}`,
+                      borderRadius: '6px',
+                      zIndex: 41,
+                      pointerEvents: 'none',
+                      boxShadow: `0 0 16px ${blockColor}66, inset 0 0 12px ${blockColor}33`,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '0 8px',
+                      color: '#FFFFFF',
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      backdropFilter: 'blur(3px)',
+                      boxSizing: 'border-box',
+                    }}
+                  >
+                    {/* Left Trim Handle Ghost Bracket */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '8px',
+                        backgroundColor: '#FFD32A',
+                        borderRadius: '4px 0 0 4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#0A0C10',
+                        fontSize: '9px',
+                        fontWeight: 900,
+                      }}
+                    >
+                      [
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px', overflow: 'hidden' }}>
+                      <span style={{ fontSize: '12px' }}>{typeIcon}</span>
+                      <span style={{ whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                        {dropIndicator.itemName || 'New Block'}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        fontSize: '9px',
+                        backgroundColor: 'rgba(0,0,0,0.6)',
+                        padding: '1px 5px',
+                        borderRadius: '3px',
+                        color: blockColor,
+                        border: `1px solid ${blockColor}66`,
+                        marginRight: '6px',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {previewDur.toFixed(1)}s
+                    </div>
+
+                    {/* Right Trim Handle Ghost Bracket */}
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                        width: '8px',
+                        backgroundColor: '#FFD32A',
+                        borderRadius: '0 4px 4px 0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#0A0C10',
+                        fontSize: '9px',
+                        fontWeight: 900,
+                      }}
+                    >
+                      ]
+                    </div>
+                  </div>
+                );
+              })()}
+            </>
+          )}
+
+          {/* Real-time Trimming Feedback Tooltip - Dynamically Track-Positioned */}
+          {trimmingInfo && (
+            <div
+              style={{
+                position: 'absolute',
+                left: `${trimmingInfo.currentSec * pxPerSec}px`,
+                top: `${Math.max(2, (trimmingInfo.trackTop !== undefined ? trimmingInfo.trackTop - 26 : 32))}px`,
+                transform: 'translateX(-50%)',
+                backgroundColor: '#1E222B',
+                color: '#FFD32A',
+                border: '1.5px solid #FFD32A',
+                borderRadius: '5px',
+                padding: '3px 9px',
+                fontSize: '10px',
+                fontWeight: 700,
+                zIndex: 60,
+                pointerEvents: 'none',
+                boxShadow: '0 4px 16px rgba(0,0,0,0.9), 0 0 12px rgba(255, 211, 42, 0.6)',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              <span>{trimmingInfo.side === 'left' ? '◀ Trim In' : 'Trim Out ▶'}</span>
+              <span style={{ color: '#FFFFFF', fontWeight: 800 }}>{trimmingInfo.durationSec.toFixed(2)}s</span>
+              <span style={{ color: '#A4B0BE', fontSize: '9px', fontFamily: "'JetBrains Mono', monospace" }}>
+                [{trimmingInfo.startSec.toFixed(2)}s — {(trimmingInfo.startSec + trimmingInfo.durationSec).toFixed(2)}s]
+              </span>
             </div>
           )}
 
@@ -1420,54 +1801,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag left handle to adjust duration / start"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_effects')}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag right handle to adjust duration"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_effects')}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                  {renderTrimHandles(clip, 'track_effects')}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected || isHovered ? '6px' : '0' }}>{clip.title}</span>
                 </div>
               );
             })}
@@ -1526,54 +1861,8 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag left handle to adjust duration / start"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_transitions')}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag right handle to adjust duration"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_transitions')}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                  {renderTrimHandles(clip, 'track_transitions')}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected || isHovered ? '6px' : '0' }}>{clip.title}</span>
                 </div>
               );
             })}
@@ -1632,60 +1921,14 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag left handle to adjust duration / start"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_stickers')}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag right handle to adjust duration"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_stickers')}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{clip.title}</span>
+                  {renderTrimHandles(clip, 'track_stickers')}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected || isHovered ? '6px' : '0' }}>{clip.title}</span>
                 </div>
               );
             })}
           </div>
 
-          {/* Track 3 — Titles & Captions Strip */}
+          {/* Track 4 — Titles Strip */}
           <div
             style={{
               height: '32px',
@@ -1715,7 +1958,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   onMouseDown={e => handleClipMouseDown(e, clip.id, clipStart, 'track_title')}
                   onDoubleClick={e => {
                     e.stopPropagation();
-                    const newText = prompt('Edit Title & Caption text:', clip.title);
+                    const newText = prompt('Edit Title text:', clip.title);
                     if (newText !== null && newText.trim()) {
                       onEditClipTitle?.(clip.id, newText.trim());
                     }
@@ -1726,7 +1969,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     left: `${clipStart * pxPerSec}px`,
                     width: `${Math.max(20, clipDur * pxPerSec)}px`,
                     height: '24px',
-                    top: '6px',
+                    top: '4px',
                     backgroundColor: '#8854D0',
                     border: isSelected ? '2px solid #00F0FF' : '1px solid #9B63E6',
                     borderRadius: '6px',
@@ -1745,67 +1988,30 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag left handle to adjust duration / start"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_title')}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag right handle to adjust duration"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_title')}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected ? '4px' : '0' }}>
+                  {renderTrimHandles(clip, 'track_title')}
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', paddingLeft: isSelected || isHovered ? '6px' : '0' }}>
                     {clip.title}
                   </span>
                 </div>
               );
             })}
+          </div>
 
-            {/* Transcript Captions / Subtitle Blocks overlayed on Track 3 */}
+          {/* Track 5 — Captions Strip (Dedicated 30px Lane) */}
+          <div
+            style={{
+              height: '30px',
+              borderBottom: '1px solid #1E232B',
+              position: 'relative',
+              backgroundColor: '#121418',
+            }}
+          >
             {captionBlocks.map(block => {
               const isActive = currentTime >= block.startSec && currentTime <= block.endSec;
               const blockLeft = block.startSec * pxPerSec;
               const blockWidth = Math.max(18, (block.endSec - block.startSec) * pxPerSec);
-              const isTrackHidden = activeTrackStates['track_title']?.hidden;
-              const isTrackLocked = activeTrackStates['track_title']?.locked;
+              const isTrackHidden = activeTrackStates['track_captions']?.hidden;
+              const isTrackLocked = activeTrackStates['track_captions']?.locked;
 
               return (
                 <div
@@ -1819,7 +2025,6 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                   onContextMenu={e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    // Toggle cut status of all tokens in this caption block directly from the timeline
                     if (onToggleDeleteToken) {
                       block.tokens.forEach(tok => onToggleDeleteToken(tok.id));
                     }
@@ -1836,22 +2041,22 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     position: 'absolute',
                     left: `${blockLeft}px`,
                     width: `${blockWidth}px`,
-                    height: '24px',
+                    height: '22px',
                     top: '4px',
                     backgroundColor: block.deleted
                       ? 'rgba(235, 59, 90, 0.25)'
                       : block.isFiller
                       ? 'rgba(255, 168, 1, 0.25)'
                       : isActive
-                      ? 'rgba(136, 84, 208, 0.95)'
-                      : 'rgba(75, 40, 130, 0.65)',
+                      ? 'rgba(56, 103, 214, 0.95)'
+                      : 'rgba(35, 65, 140, 0.65)',
                     border: isActive
                       ? '2px solid #00F0FF'
                       : block.deleted
                       ? '1px dashed #FF4757'
                       : block.isFiller
                       ? '1px dashed #FFA502'
-                      : '1px solid rgba(155, 99, 230, 0.6)',
+                      : '1px solid rgba(56, 103, 214, 0.6)',
                     borderRadius: '5px',
                     display: 'flex',
                     alignItems: 'center',
@@ -1931,53 +2136,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'border-color 0.12s ease, box-shadow 0.12s ease, opacity 0.15s ease',
                   }}
                 >
-                  {/* Yellow Drag Handles if Selected or Hovered and track not locked */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag to trim clip in-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', clip.trackId)}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag to trim clip out-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', clip.trackId)}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
+                  {renderTrimHandles(clip, 'track_video')}
 
                   {/* Thumbnail Strip Header */}
                   <div
@@ -2157,53 +2316,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                     transition: 'all 0.12s ease',
                   }}
                 >
-                  {/* Trim In/Out Yellow Handles when Selected or Hovered */}
-                  {(isSelected || isHovered) && !isTrackLocked && (
-                    <>
-                      <div
-                        id={`trim-left-${clip.id}`}
-                        data-testid={`trim-left-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim In-Point (Left handle)"
-                        tabIndex={0}
-                        title="Drag to trim audio in-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', 'track_audio')}
-                        style={{
-                          position: 'absolute',
-                          left: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '2px 0 0 2px',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                      <div
-                        id={`trim-right-${clip.id}`}
-                        data-testid={`trim-right-${clip.id}`}
-                        role="separator"
-                        aria-label="Trim Out-Point (Right handle)"
-                        tabIndex={0}
-                        title="Drag to trim audio out-point"
-                        onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', 'track_audio')}
-                        style={{
-                          position: 'absolute',
-                          right: '0',
-                          top: '0',
-                          bottom: '0',
-                          width: '7px',
-                          backgroundColor: '#FFD32A',
-                          cursor: 'ew-resize',
-                          zIndex: 10,
-                          borderRadius: '0 2px 2px 0',
-                          boxShadow: '0 0 6px rgba(255, 211, 42, 0.8)',
-                        }}
-                      />
-                    </>
-                  )}
+                  {renderTrimHandles(clip, 'track_audio')}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', overflow: 'hidden' }}>
                     <span style={{ fontSize: '10px', fontWeight: 600, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
                       {clip.title}
@@ -2315,51 +2428,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
                         fontWeight: 600,
                       }}
                     >
-                      {/* Trim Handles for Custom Track Clips (Filter Adjustment Layers & Transitions) */}
-                      {isSelected && !isTrackLocked && (
-                        <>
-                          <div
-                            id={`trim-left-${clip.id}`}
-                            data-testid={`trim-left-${clip.id}`}
-                            role="separator"
-                            aria-label="Trim In-Point (Left handle)"
-                            tabIndex={0}
-                            title="Drag to trim in-point"
-                            onMouseDown={e => handleTrimMouseDown(e, clip.id, 'left', trackId)}
-                            style={{
-                              position: 'absolute',
-                              left: '0',
-                              top: '0',
-                              bottom: '0',
-                              width: '7px',
-                              backgroundColor: '#FFD32A',
-                              cursor: 'ew-resize',
-                              zIndex: 10,
-                              borderRadius: '2px 0 0 2px',
-                            }}
-                          />
-                          <div
-                            id={`trim-right-${clip.id}`}
-                            data-testid={`trim-right-${clip.id}`}
-                            role="separator"
-                            aria-label="Trim Out-Point (Right handle)"
-                            tabIndex={0}
-                            title="Drag to trim out-point"
-                            onMouseDown={e => handleTrimMouseDown(e, clip.id, 'right', trackId)}
-                            style={{
-                              position: 'absolute',
-                              right: '0',
-                              top: '0',
-                              bottom: '0',
-                              width: '7px',
-                              backgroundColor: '#FFD32A',
-                              cursor: 'ew-resize',
-                              zIndex: 10,
-                              borderRadius: '0 2px 2px 0',
-                            }}
-                          />
-                        </>
-                      )}
+                      {renderTrimHandles(clip, trackId)}
                       <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingLeft: isSelected ? '4px' : '0' }}>
                         {clip.title}
                       </span>

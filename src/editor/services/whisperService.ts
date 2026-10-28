@@ -12,6 +12,8 @@ import {
   asSourceSeconds,
   processVocalPurifierPcm,
   alignWhisperChunksToWordTokens,
+  initializeGlobalModelCache,
+  markModelCached,
 } from '@astral/core';
 
 export interface TranscribeProgressCallback {
@@ -143,8 +145,13 @@ export async function transcribeMediaFile(
     let asrPipeline = pipelineCache.get(cacheKey);
 
     if (!asrPipeline) {
+      await initializeGlobalModelCache();
       onProgress?.(`Loading Whisper model ${modelId.replace('Xenova/', '')} (${device.toUpperCase()})...`, 45);
       const { pipeline, env } = await import('@huggingface/transformers');
+
+      if (env) {
+        env.useBrowserCache = true;
+      }
 
       if (env?.backends?.onnx?.wasm) {
         const isIsolated = typeof self !== 'undefined' && self.crossOriginIsolated;
@@ -166,6 +173,7 @@ export async function transcribeMediaFile(
         },
       });
       pipelineCache.set(cacheKey, asrPipeline);
+      markModelCached(modelId);
     }
 
     return async (

@@ -9,6 +9,7 @@ export interface ToolsDrawerViewProps {
   onTabChange?: (tab: ToolDrawerTab) => void;
   masterVolume?: number;
   onMasterVolumeChange?: (volume: number) => void;
+  onOpenAudioEnhancement?: () => void;
 }
 
 export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
@@ -18,6 +19,7 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
   onTabChange,
   masterVolume = 100,
   onMasterVolumeChange,
+  onOpenAudioEnhancement,
 }) => {
   const [internalTab, setInternalTab] = useState<ToolDrawerTab>('chroma');
   const activeTab = activeSubTab ?? internalTab;
@@ -406,6 +408,45 @@ export const ToolsDrawerView: React.FC<ToolsDrawerViewProps> = ({
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* AI Audio Enhancement Suite Card */}
+          <div
+            style={{
+              backgroundColor: '#162338',
+              border: '1px solid #168BFF',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#FFFFFF' }}>
+                  AI Audio Enhancement &amp; Cleansing
+                </span>
+                <span style={{ fontSize: '9px', fontWeight: 700, backgroundColor: '#054429', color: '#34D399', borderRadius: '4px', padding: '1px 5px' }}>
+                  DeepFilter + FDT
+                </span>
+              </div>
+              <div style={{ fontSize: '10px', color: '#93C5FD', marginTop: '2px' }}>
+                5-Stage pipeline: Denoise, Silero VAD, Whisper token reuse, FDT tagging &amp; 15ms EDL union
+              </div>
+            </div>
+            {onOpenAudioEnhancement && (
+              <ScarletButton
+                id="btn-open-audio-enhancement-drawer"
+                data-testid="btn-open-audio-enhancement-drawer"
+                variant="primary"
+                size="sm"
+                onClick={onOpenAudioEnhancement}
+              >
+                Open Suite
+              </ScarletButton>
+            )}
           </div>
 
           {/* Softablitz Vocal Purifier Badge Toggle */}

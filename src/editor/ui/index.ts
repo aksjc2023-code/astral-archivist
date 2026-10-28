@@ -9,6 +9,7 @@ export * from './workspace/TranscriptEditorView';
 export * from './workspace/AutoCleanButton';
 export * from './workspace/ToolsDrawerView';
 export * from './workspace/EffectsGridView';
+export * from './workspace/AudioEnhancementModal';
 export * from './player/VideoPreviewMonitor';
 export * from './timeline/MiddleActionToolbar';
 export * from './timeline/MultiTrackTimeline';

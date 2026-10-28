@@ -36,6 +36,7 @@ import {
   FilterClipData,
   getSummarizedKeyTokenIds,
   predictDisfluentIndices,
+  AudioEnhancementResult,
 } from '@astral/core';
 
 import {
@@ -54,6 +55,7 @@ import {
   ExportReadyDialog,
   FaultSimulatorBar,
   StudioCaptureModal,
+  AudioEnhancementModal,
   IconSparkles,
 } from '@astral/ui-editor';
 
@@ -299,19 +301,21 @@ export const ScarletEditorApp: React.FC = () => {
   }, [clips, currentTime, trackStates]);
 
   // Active transition: strictly active during transition cut window
+  const activeTransClip = useMemo(() => {
+    if (trackStates['track_transitions']?.hidden) return undefined;
+    return clips.find(c => {
+      const isTrans = c.title.startsWith('⧉ ') || (c as any).isTransition || c.trackId === 'track_transitions';
+      if (!isTrans) return false;
+      const start = c.timelineStart ?? c.sourceStart ?? 0;
+      const dur = c.timelineDuration ?? c.duration ?? 0;
+      return currentTime >= start && currentTime <= start + dur;
+    });
+  }, [clips, currentTime, trackStates]);
+
   const currentTransition = useMemo(() => {
     // 1. Check if there is an explicit transition clip on timeline active at currentTime
-    if (!trackStates['track_transitions']?.hidden) {
-      const transClip = clips.find(c => {
-        const isTrans = c.title.startsWith('⧉ ') || (c as any).isTransition || c.trackId === 'track_transitions';
-        if (!isTrans) return false;
-        const start = c.timelineStart ?? c.sourceStart ?? 0;
-        const dur = c.timelineDuration ?? c.duration ?? 0;
-        return currentTime >= start && currentTime <= start + dur;
-      });
-      if (transClip) {
-        return (transClip as any).transitionName || transClip.title.replace('⧉ ', '');
-      }
+    if (activeTransClip) {
+      return (activeTransClip as any).transitionName || activeTransClip.title.replace('⧉ ', '');
     }
 
     // 2. Check active video clip's transitionIn during entrance window [clipStart, clipStart + transitionWindowSec]
@@ -335,7 +339,14 @@ export const ScarletEditorApp: React.FC = () => {
     }
 
     return undefined;
-  }, [clips, activeClip, currentTime]);
+  }, [activeTransClip, activeClip, currentTime]);
+
+  const currentTransitionDuration = useMemo(() => {
+    if (activeTransClip) {
+      return activeTransClip.timelineDuration ?? activeTransClip.duration ?? 2.0;
+    }
+    return activeClip?.transitionDuration || 1.2;
+  }, [activeTransClip, activeClip]);
 
   // Active filter strictly scoped to:
   // 1. Any filter clip on the timeline at currentTime, OR
@@ -850,7 +861,7 @@ export const ScarletEditorApp: React.FC = () => {
     setSelectedClipIds([clipB.id]);
   }, [clips, currentTime, pushHistory, tokensByMedia, trackStates, selectedClipId]);
 
-  // Trim clip edges (interactive yellow handles) with track-lock check and collision awareness
+  // Trim clip edges (interactive handles) with track-lock check and collision awareness
   const handleTrimClip = useCallback((clipId: string, side: 'left' | 'right', deltaSec: number) => {
     const target = clips.find(c => c.id === clipId);
     if (!target) return;
@@ -860,46 +871,49 @@ export const ScarletEditorApp: React.FC = () => {
       dragStartClipsRef.current = clips;
       pushHistory(tokensByMedia, clips);
     }
+    const baselineClips = dragStartClipsRef.current;
+    const initialClip = baselineClips.find(c => c.id === clipId) || target;
+    const initialStart = initialClip.timelineStart ?? initialClip.sourceStart ?? asTimelineSeconds(0);
+    const initialDur = initialClip.timelineDuration ?? initialClip.duration ?? asSeconds(0);
+    const initialIn = initialClip.sourceIn ?? asSourceSeconds(0);
+    const initialOut = initialClip.sourceOut ?? asSourceSeconds(initialIn + initialDur);
+
+    // Identify sibling clips on the same track from baseline to prevent trim collisions
+    const siblings = baselineClips.filter(s => s.trackId === initialClip.trackId && s.id !== clipId);
+    const siblingsBefore = siblings.filter(s => {
+      const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+      return sStart < initialStart;
+    });
+    const siblingsAfter = siblings.filter(s => {
+      const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+      return sStart > initialStart;
+    });
+
+    const maxPrevEnd = siblingsBefore.length > 0
+      ? Math.max(0, ...siblingsBefore.map(s => {
+          const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
+          const sDur = s.timelineDuration ?? s.duration ?? asSeconds(0);
+          return sStart + sDur;
+        }))
+      : 0;
+
+    const minNextStart = siblingsAfter.length > 0
+      ? Math.min(...siblingsAfter.map(s => s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0)))
+      : Infinity;
+
     setClips(prev => prev.map(c => {
       if (c.id !== clipId) return c;
-      const curStart = c.timelineStart ?? c.sourceStart ?? asTimelineSeconds(0);
-      const curDur = c.timelineDuration ?? c.duration ?? asSeconds(0);
-      const curIn = c.sourceIn ?? asSourceSeconds(0);
-      const curOut = c.sourceOut ?? asSourceSeconds(curIn + curDur);
-
-      // Identify sibling clips on the same track to prevent trim collisions
-      const siblings = prev.filter(s => s.trackId === c.trackId && s.id !== clipId);
-      const siblingsBefore = siblings.filter(s => {
-        const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
-        return sStart < curStart;
-      });
-      const siblingsAfter = siblings.filter(s => {
-        const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
-        return sStart > curStart;
-      });
-
-      const maxPrevEnd = siblingsBefore.length > 0
-        ? Math.max(0, ...siblingsBefore.map(s => {
-            const sStart = s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0);
-            const sDur = s.timelineDuration ?? s.duration ?? asSeconds(0);
-            return sStart + sDur;
-          }))
-        : 0;
-
-      const minNextStart = siblingsAfter.length > 0
-        ? Math.min(...siblingsAfter.map(s => s.timelineStart ?? s.sourceStart ?? asTimelineSeconds(0)))
-        : Infinity;
 
       if (side === 'left') {
         const minDur = 0.3;
-        const maxDelta = curDur - minDur; // Min duration 0.3s
+        const maxDelta = initialDur - minDur; // Min duration 0.3s
         // Guard against extending past previous sibling boundary AND negative sourceIn!
-        const maxLeftExtension = c.mediaId ? Math.min(curStart - maxPrevEnd, curIn) : Math.max(0, curStart - maxPrevEnd);
+        const maxLeftExtension = initialClip.mediaId ? Math.min(initialStart - maxPrevEnd, initialIn) : Math.max(0, initialStart - maxPrevEnd);
         const appliedDelta = Math.max(-Math.max(0, maxLeftExtension), Math.min(maxDelta, deltaSec));
-        const newStart = asTimelineSeconds(Number(Math.max(0, curStart + appliedDelta).toFixed(2)));
-        const newDur = asSeconds(Number(Math.max(minDur, curDur - appliedDelta).toFixed(2)));
-        const newIn = asSourceSeconds(Number((c.mediaId ? Math.max(0, curIn + appliedDelta) : 0).toFixed(2)));
-        const newOut = asSourceSeconds(Number((c.mediaId ? curOut : newDur).toFixed(2)));
+        const newStart = asTimelineSeconds(Number(Math.max(0, initialStart + appliedDelta).toFixed(2)));
+        const newDur = asSeconds(Number(Math.max(minDur, initialDur - appliedDelta).toFixed(2)));
+        const newIn = asSourceSeconds(Number((initialClip.mediaId ? Math.max(0, initialIn + appliedDelta) : 0).toFixed(2)));
+        const newOut = asSourceSeconds(Number((initialClip.mediaId ? initialOut : newDur).toFixed(2)));
         const updated: TimelineClip = {
           ...c,
           timelineStart: newStart,
@@ -909,6 +923,9 @@ export const ScarletEditorApp: React.FC = () => {
           sourceStart: newStart,
           duration: newDur,
         };
+        if (c.trackId === 'track_transitions') {
+          updated.transitionDuration = newDur;
+        }
         try {
           validateTimelineClip(updated);
         } catch {
@@ -919,11 +936,11 @@ export const ScarletEditorApp: React.FC = () => {
       } else {
         // Guard against extending past next sibling boundary
         const minDur = 0.3;
-        const maxPossibleDur = Number.isFinite(minNextStart) ? minNextStart - curStart : Infinity;
-        const requestedDur = Math.max(minDur, Number((curDur + deltaSec).toFixed(2)));
+        const maxPossibleDur = Number.isFinite(minNextStart) ? minNextStart - initialStart : Infinity;
+        const requestedDur = Math.max(minDur, Number((initialDur + deltaSec).toFixed(2)));
         const newDur = asSeconds(Math.min(requestedDur, maxPossibleDur));
-        const newIn = asSourceSeconds(Number((c.mediaId ? curIn : 0).toFixed(2)));
-        const newOut = asSourceSeconds(Number((c.mediaId ? curIn + newDur : newDur).toFixed(2)));
+        const newIn = asSourceSeconds(Number((initialClip.mediaId ? initialIn : 0).toFixed(2)));
+        const newOut = asSourceSeconds(Number((initialClip.mediaId ? initialIn + newDur : newDur).toFixed(2)));
         const updated: TimelineClip = {
           ...c,
           timelineDuration: newDur,
@@ -931,6 +948,9 @@ export const ScarletEditorApp: React.FC = () => {
           sourceOut: newOut,
           duration: newDur,
         };
+        if (c.trackId === 'track_transitions') {
+          updated.transitionDuration = newDur;
+        }
         try {
           validateTimelineClip(updated);
         } catch {
@@ -1116,7 +1136,35 @@ export const ScarletEditorApp: React.FC = () => {
     targetTrackId: string
   ) => {
     pushHistory(tokensByMedia, clips);
-    const dropTime = asTimelineSeconds(Number(dropTimeSec.toFixed(2)));
+
+    // Enforce strict dedicated track routing
+    const resolvedTrackId = payload.type === 'titles'
+      ? 'track_title'
+      : payload.type === 'stickers'
+      ? 'track_stickers'
+      : payload.type === 'transitions'
+      ? 'track_transitions'
+      : payload.type === 'filters'
+      ? 'track_effects'
+      : (payload.type === 'asset' && payload.data?.type === 'audio')
+      ? 'track_audio'
+      : targetTrackId.startsWith('track_custom')
+      ? targetTrackId
+      : 'track_video';
+
+    // Prevent overlap on the target track by snapping to adjacent boundary if dropped inside an existing block
+    let dropTime = asTimelineSeconds(Number(dropTimeSec.toFixed(2)));
+    const existingOnTrack = clips.filter(c => c.trackId === resolvedTrackId);
+    const overlappingClip = existingOnTrack.find(c => {
+      const s = c.timelineStart ?? c.sourceStart ?? 0;
+      const d = c.timelineDuration ?? c.duration ?? 0;
+      return dropTime >= s && dropTime < s + d;
+    });
+    if (overlappingClip) {
+      const s = overlappingClip.timelineStart ?? overlappingClip.sourceStart ?? 0;
+      const d = overlappingClip.timelineDuration ?? overlappingClip.duration ?? 0;
+      dropTime = asTimelineSeconds(Number((s + d).toFixed(2)));
+    }
 
     if (payload.type === 'titles') {
       const dur = asSeconds(4.0);
@@ -1262,6 +1310,17 @@ export const ScarletEditorApp: React.FC = () => {
       setSelectedClipIds([newClip.id]);
       setMediaAssets(prev => prev.map(a => a.id === asset.id ? { ...a, isUsedOnTimeline: true } : a));
     }
+
+    // Automatically seek playhead to dropped block position for instant canvas preview & length editing
+    setCurrentTime(dropTime);
+    setCaptureStatus(`✨ Added "${payload.name}" to ${
+      resolvedTrackId === 'track_effects' ? 'Effects & Filters'
+      : resolvedTrackId === 'track_transitions' ? 'Transitions'
+      : resolvedTrackId === 'track_stickers' ? 'Stickers & Overlays'
+      : resolvedTrackId === 'track_title' ? 'Titles'
+      : 'Timeline'
+    }`);
+    window.setTimeout(() => setCaptureStatus(''), 2500);
   }, [pushHistory, tokensByMedia, clips]);
 
   // Delete Selection (Del Key / Trash Icon) - supports batch deletion
@@ -1596,6 +1655,24 @@ export const ScarletEditorApp: React.FC = () => {
   }, [activeSubNav]);
 
   const [isVaultImportModalOpen, setIsVaultImportModalOpen] = useState(false);
+  const [isAudioEnhancementOpen, setIsAudioEnhancementOpen] = useState(false);
+
+  const handleApplyAudioEnhancement = useCallback((result: AudioEnhancementResult) => {
+    if (!result) return;
+    pushHistory(tokensByMedia, clips);
+
+    setTokensByMedia(prev => ({
+      ...prev,
+      [activeTranscriptMediaId]: result.tokens,
+    }));
+
+    setTelemetry(prev => ({
+      ...prev,
+      timeSavedSec: Number(((prev.timeSavedSec || 0) + result.totalTimeSavedSec).toFixed(2)),
+      recoveryLog: `Audio Enhancement: ${result.edlSegments.length} EDL cuts (${result.silenceSegments.length} silences >1.0s, ${result.disfluencySegments.length} disfluencies). Saved ${result.totalTimeSavedSec.toFixed(2)}s.`,
+    }));
+  }, [pushHistory, tokensByMedia, clips, activeTranscriptMediaId]);
+
   const { recordings: vaultRecordings } = useVaultStore();
 
   const handleImportVaultItem = useCallback(async (item: VaultItem, andPlaceOnTimeline: boolean = true) => {
@@ -2186,6 +2263,27 @@ export const ScarletEditorApp: React.FC = () => {
 
   // Apply Filter, Title, Transition, or Sticker from Effects Grid
   const handleApplyEffect = useCallback((effectName: string) => {
+    const targetTrack = activeDockTab === 'filters'
+      ? 'track_effects'
+      : activeDockTab === 'titles'
+      ? 'track_title'
+      : activeDockTab === 'transitions'
+      ? 'track_transitions'
+      : 'track_stickers';
+
+    let applyTime = asTimelineSeconds(Number(currentTime.toFixed(2)));
+    const existingOnTrack = clips.filter(c => c.trackId === targetTrack);
+    const overlapping = existingOnTrack.find(c => {
+      const s = c.timelineStart ?? c.sourceStart ?? 0;
+      const d = c.timelineDuration ?? c.duration ?? 0;
+      return applyTime >= s && applyTime < s + d;
+    });
+    if (overlapping) {
+      const s = overlapping.timelineStart ?? overlapping.sourceStart ?? 0;
+      const d = overlapping.timelineDuration ?? overlapping.duration ?? 0;
+      applyTime = asTimelineSeconds(Number((s + d).toFixed(2)));
+    }
+
     if (activeDockTab === 'filters') {
       pushHistory(tokensByMedia, clips);
       setActiveFilter(effectName);
@@ -2193,11 +2291,11 @@ export const ScarletEditorApp: React.FC = () => {
         id: `filter_${Date.now()}`,
         trackId: 'track_effects',
         title: `⚡ ${effectName}`,
-        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineStart: applyTime,
         timelineDuration: asSeconds(4.0),
         sourceIn: asSourceSeconds(0),
         sourceOut: asSourceSeconds(4.0),
-        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        sourceStart: applyTime,
         duration: asSeconds(4.0),
         color: '#EB3B5A',
         filter: effectName,
@@ -2216,11 +2314,11 @@ export const ScarletEditorApp: React.FC = () => {
         id: `title_${Date.now()}`,
         trackId: 'track_title',
         title: effectName,
-        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineStart: applyTime,
         timelineDuration: asSeconds(4.0),
         sourceIn: asSourceSeconds(0),
         sourceOut: asSourceSeconds(4.0),
-        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        sourceStart: applyTime,
         duration: asSeconds(4.0),
         color: '#8854D0',
         titleData: {
@@ -2245,11 +2343,11 @@ export const ScarletEditorApp: React.FC = () => {
         id: `trans_${Date.now()}`,
         trackId: 'track_transitions',
         title: `⧉ ${effectName}`,
-        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineStart: applyTime,
         timelineDuration: dur,
         sourceIn: asSourceSeconds(0),
         sourceOut: asSourceSeconds(dur),
-        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        sourceStart: applyTime,
         duration: dur,
         transitionDuration: dur,
         color: '#FA8231',
@@ -2267,11 +2365,11 @@ export const ScarletEditorApp: React.FC = () => {
         id: `sticker_${Date.now()}`,
         trackId: 'track_stickers',
         title: `★ ${effectName}`,
-        timelineStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        timelineStart: applyTime,
         timelineDuration: asSeconds(4.0),
         sourceIn: asSourceSeconds(0),
         sourceOut: asSourceSeconds(4.0),
-        sourceStart: asTimelineSeconds(Number(currentTime.toFixed(2))),
+        sourceStart: applyTime,
         duration: asSeconds(4.0),
         color: '#FF7F50',
       };
@@ -2563,6 +2661,7 @@ export const ScarletEditorApp: React.FC = () => {
               onClearTranscriptionError={() => setTranscriptionError(null)}
               onSummarizeKeyPoints={handleSummarizeKeyPoints}
               onAutoClean={handleAutoClean}
+              onOpenAudioEnhancement={() => setIsAudioEnhancementOpen(true)}
             />
           ) : activeDockTab === 'media' && activeSubNav === 'import' ? (
             /* View C: Import Dropzone with Real Files */
@@ -2580,6 +2679,7 @@ export const ScarletEditorApp: React.FC = () => {
               onTabChange={setActiveToolTab}
               masterVolume={masterVolume}
               onMasterVolumeChange={setMasterVolume}
+              onOpenAudioEnhancement={() => setIsAudioEnhancementOpen(true)}
             />
           ) : ['filters', 'transitions', 'titles', 'stickers'].includes(activeDockTab) ? (
             /* View E: Effects Grid (Page 4 & 7) */
@@ -2840,7 +2940,7 @@ export const ScarletEditorApp: React.FC = () => {
             onUpdateTitleData={handleUpdateTitleData}
             activeSticker={activeStickerClip ? activeStickerClip.title.replace(/^★\s*/, '') : undefined}
             activeTransition={currentTransition}
-            activeTransitionDuration={activeClip?.transitionDuration || 1.2}
+            activeTransitionDuration={currentTransitionDuration}
             onEditActiveTitle={handleEditActiveTitle}
             onClearActiveTitle={() => {
               setActiveTitlePreset(undefined);
@@ -2908,8 +3008,8 @@ export const ScarletEditorApp: React.FC = () => {
         onToggleFaultSimulator={() => setIsFaultSimulatorOpen(!isFaultSimulatorOpen)}
       />
 
-      {/* Zone 6: Multi-Track Timeline & Ruler (38% Height) */}
-      <div style={{ flex: '1 1 38%', minHeight: '180px', display: 'flex', flexDirection: 'column' }}>
+      {/* Zone 6: Multi-Track Timeline & Ruler (40% Height) */}
+      <div style={{ flex: '1 1 40%', minHeight: '310px', display: 'flex', flexDirection: 'column' }}>
         <MultiTrackTimeline
           currentTime={currentTime}
           duration={projectDuration}
@@ -3102,6 +3202,17 @@ export const ScarletEditorApp: React.FC = () => {
         onClose={() => setIsFaultSimulatorOpen(false)}
         telemetry={telemetry}
         onTriggerFailureMode={handleTriggerFailureMode}
+      />
+
+      {/* 5-Stage AI Audio Enhancement & Disfluency Cleansing Modal */}
+      <AudioEnhancementModal
+        isOpen={isAudioEnhancementOpen}
+        onClose={() => setIsAudioEnhancementOpen(false)}
+        activeAsset={mediaAssets.find(a => a.id === activeTranscriptMediaId) || mediaAssets.find(a => a.id === activeMediaId) || mediaAssets[0]}
+        existingTokens={tokensByMedia[activeTranscriptMediaId] ?? []}
+        onApplyEnhancement={handleApplyAudioEnhancement}
+        whisperModel={whisperModel}
+        onSelectWhisperModel={setWhisperModel}
       />
 
       {/* Saved Vault Media Ingestion Modal (Select single or multiple saved recordings) */}

@@ -8,3 +8,6 @@ export * from './ttsEngine';
 export * from './extractiveSummarizer';
 export * from './disfluencyCutter';
 export * from './mockData';
+export * from './timelineDragService';
+export * from './modelCacheService';
+export * from './audioEnhancementService';

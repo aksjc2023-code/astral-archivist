@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ActivityDockTab } from '@astral/core';
+import { ActivityDockTab, setTimelineDragPayload } from '@astral/core';
 
 export interface EffectsGridViewProps {
   type: 'filters' | 'transitions' | 'titles' | 'stickers';
@@ -147,6 +147,29 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
         })}
       </div>
 
+      {/* Pro Tip Banner */}
+      <div
+        style={{
+          backgroundColor: '#1E232E',
+          border: '1px solid #2B3A4F',
+          borderRadius: '8px',
+          padding: '8px 12px',
+          marginBottom: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          fontSize: '11px',
+          color: '#93C5FD',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span>💡</span>
+          <span>
+            <strong>Premiere Pro-style Tracks:</strong> Drag any preset directly to the timeline to create an isolated block. Drag its yellow handles to adjust length!
+          </span>
+        </div>
+      </div>
+
       {/* Grid Cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '12px' }}>
         {filteredItems.length === 0 && (
@@ -159,20 +182,47 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
           return (
             <div
               key={item.name}
+              id={`effect-card-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
+              data-testid={`effect-card-${item.name.toLowerCase().replace(/[^a-z0-9]/g, '-')}`}
               draggable={true}
               onDragStart={e => {
-                const payload = JSON.stringify({
+                const payload = {
                   type,
                   name: item.name,
                   color: item.color,
                   sub: item.sub,
                   category: item.category,
-                });
-                e.dataTransfer.setData('application/scarlet-item', payload);
+                };
+                setTimelineDragPayload(payload);
+                e.dataTransfer.setData('application/scarlet-item', JSON.stringify(payload));
+                e.dataTransfer.setData('application/scarlet-effect-type', type);
                 e.dataTransfer.setData('text/plain', item.name);
                 e.dataTransfer.effectAllowed = 'copy';
+
+                // Create sleek drag ghost pill
+                const ghost = document.createElement('div');
+                ghost.style.position = 'absolute';
+                ghost.style.top = '-9999px';
+                ghost.style.left = '-9999px';
+                ghost.style.backgroundColor = item.color;
+                ghost.style.color = '#FFFFFF';
+                ghost.style.padding = '6px 14px';
+                ghost.style.borderRadius = '6px';
+                ghost.style.fontSize = '11px';
+                ghost.style.fontWeight = '700';
+                ghost.style.boxShadow = '0 8px 24px rgba(0,0,0,0.6)';
+                ghost.style.border = '1px solid rgba(255,255,255,0.4)';
+                ghost.style.display = 'flex';
+                ghost.style.alignItems = 'center';
+                ghost.style.gap = '6px';
+                ghost.innerText = `${type === 'filters' ? '⚡' : type === 'transitions' ? '⧉' : type === 'titles' ? '🔤' : '★'} ${item.name} (4.0s)`;
+                document.body.appendChild(ghost);
+                e.dataTransfer.setDragImage(ghost, 20, 20);
+                setTimeout(() => document.body.removeChild(ghost), 100);
               }}
-              onClick={() => onApplyEffect?.(item.name)}
+              onDragEnd={() => {
+                setTimelineDragPayload(null);
+              }}
               style={{
                 backgroundColor: '#22262E',
                 borderRadius: '12px',
@@ -180,14 +230,17 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
                 overflow: 'hidden',
                 cursor: 'grab',
                 transition: 'all 0.15s ease',
+                position: 'relative',
               }}
               onMouseEnter={e => {
                 (e.currentTarget as HTMLElement).style.transform = 'translateY(-2px)';
                 (e.currentTarget as HTMLElement).style.borderColor = '#168BFF';
+                (e.currentTarget as HTMLElement).style.boxShadow = '0 6px 18px rgba(0,0,0,0.4)';
               }}
               onMouseLeave={e => {
                 (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
                 (e.currentTarget as HTMLElement).style.borderColor = '#2B303A';
+                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
               }}
             >
               <div
@@ -225,11 +278,62 @@ export const EffectsGridView: React.FC<EffectsGridViewProps> = ({ type, onApplyE
                 >
                   {isFav ? '♥' : '♡'}
                 </button>
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: '4px',
+                    left: '6px',
+                    fontSize: '9px',
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    padding: '1px 5px',
+                    borderRadius: '4px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '3px',
+                  }}
+                >
+                  <span>⋮⋮</span>
+                  <span>Drag to Timeline</span>
+                </div>
               </div>
 
-              <div style={{ padding: '8px 10px' }}>
-                <div style={{ fontSize: '11px', fontWeight: 500, color: '#FFFFFF' }}>{item.name}</div>
-                <div style={{ fontSize: '10px', color: '#636E7B', marginTop: '2px' }}>{item.sub}</div>
+              <div style={{ padding: '8px 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ overflow: 'hidden' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 500, color: '#FFFFFF', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                    {item.name}
+                  </div>
+                  <div style={{ fontSize: '10px', color: '#636E7B', marginTop: '2px', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                    {item.sub}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  title="Add block to timeline at current playhead"
+                  onClick={() => onApplyEffect?.(item.name)}
+                  style={{
+                    backgroundColor: '#1E293B',
+                    color: '#93C5FD',
+                    border: '1px solid #334155',
+                    borderRadius: '4px',
+                    padding: '3px 8px',
+                    fontSize: '10px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    marginLeft: '6px',
+                  }}
+                  onMouseEnter={e => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = '#168BFF';
+                    (e.currentTarget as HTMLElement).style.color = '#FFFFFF';
+                  }}
+                  onMouseLeave={e => {
+                    (e.currentTarget as HTMLElement).style.backgroundColor = '#1E293B';
+                    (e.currentTarget as HTMLElement).style.color = '#93C5FD';
+                  }}
+                >
+                  + Add
+                </button>
               </div>
             </div>
           );

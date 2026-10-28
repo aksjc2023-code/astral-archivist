@@ -59,6 +59,8 @@ export interface MediaAsset {
   thumbnailUrl: string;
   locator?: string;           // Environment-neutral media locator (file:// path, asset:// URI, or URL)
   videoUrl?: string;          // Direct stream URL for browser preview
+  url?: string;               // Source URL alias
+  blob?: Blob;                // In-memory File/Blob object
   isUsedOnTimeline: boolean;
   resolution?: string;
   category?: string;
