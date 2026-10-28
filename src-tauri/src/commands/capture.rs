@@ -173,19 +173,23 @@ pub async fn save_captured_recording(
             "-vn",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-ar", "44100",
+            "-ar", "48000",
+            "-af", "aresample=async=1000",
             "-movflags", "+faststart",
         ]);
     } else {
         cmd.args([
+            "-map", "0:v:0",
+            "-map", "0:a?",
             "-r", &target_fps.to_string(),
             "-c:v", "libx264",
             "-preset", "ultrafast",
-            "-crf", "24",
+            "-crf", "23",
             "-pix_fmt", "yuv420p",
-            "-movflags", "+faststart",
             "-c:a", "aac",
-            "-b:a", "128k",
+            "-b:a", "192k",
+            "-af", "aresample=async=1000",
+            "-movflags", "+faststart",
         ]);
     }
     cmd.arg(&output_path);
@@ -194,29 +198,34 @@ pub async fn save_captured_recording(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        // If it failed because there is no audio stream in the recorded video, transcode video without audio stream
-        if !is_audio_only {
-            let mut retry_cmd = std::process::Command::new(&ffmpeg);
-            retry_cmd.arg("-y").arg("-i").arg(&raw_temp);
+        eprintln!("[save_captured_recording] Primary transcode failed: {}", stderr);
+
+        // Fallback pass: attempt relaxed transcode ignoring damaged headers
+        let mut retry_cmd = std::process::Command::new(&ffmpeg);
+        retry_cmd.arg("-y").arg("-err_detect").arg("ignore_err").arg("-i").arg(&raw_temp);
+
+        if is_audio_only {
             retry_cmd.args([
-                "-r", &target_fps.to_string(),
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-crf", "24",
-                "-pix_fmt", "yuv420p",
+                "-vn",
+                "-c:a", "aac",
+                "-b:a", "128k",
                 "-movflags", "+faststart",
             ]);
-            retry_cmd.arg(&output_path);
-            let retry_out = retry_cmd.output().map_err(|e| format!("Retry spawn error: {}", e))?;
-            let _ = std::fs::remove_file(&raw_temp);
-
-            if !retry_out.status.success() {
-                let err_msg = String::from_utf8_lossy(&retry_out.stderr);
-                return Err(format!("FFmpeg failed to transcode raw recording: {}", err_msg));
-            }
         } else {
-            let _ = std::fs::remove_file(&raw_temp);
-            return Err(format!("FFmpeg failed to transcode raw recording: {}", stderr));
+            retry_cmd.args([
+                "-c:v", "copy",
+                "-c:a", "copy",
+                "-movflags", "+faststart",
+            ]);
+        }
+        retry_cmd.arg(&output_path);
+
+        let retry_out = retry_cmd.output().map_err(|e| format!("Retry spawn error: {}", e))?;
+        let _ = std::fs::remove_file(&raw_temp);
+
+        if !retry_out.status.success() {
+            let err_msg = String::from_utf8_lossy(&retry_out.stderr);
+            return Err(format!("FFmpeg failed to transcode raw recording: {}", err_msg));
         }
     } else {
         let _ = std::fs::remove_file(&raw_temp);

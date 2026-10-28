@@ -1,10 +1,13 @@
-import React, { useEffect, useRef } from 'react';
-import { Play, Pause, Square, RefreshCw, AlertCircle, Camera, CameraOff, Mic } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Play, Pause, Square, RefreshCw, AlertCircle, Camera, CameraOff, Mic, Volume2 } from 'lucide-react';
 import { useRecorderStore } from '../../store/useRecorderStore';
 import { useVaultStore } from '../../store/useVaultStore';
+import { SourceSelector } from './SourceSelector';
+import { getMicLevelDb } from '../../utils/recorderEngine';
 
 export const Deck: React.FC = () => {
   const {
+    sources, selectedSourceId, selectSource, fetchSources,
     config, isRecording, isPaused, durationMs, error, isLoading,
     isCameraOn, toggleCamera, updateConfig,
     startRecording, startVoiceOnlyRecording, pauseRecording, resumeRecording, stopRecording, tickDuration,
@@ -12,15 +15,42 @@ export const Deck: React.FC = () => {
 
   const fetchRecordings = useVaultStore((s) => s.fetchRecordings);
   const timerRef = useRef<number | null>(null);
+  const [micDb, setMicDb] = useState<number>(-100);
 
+  // Fetch capture sources on mount
   useEffect(() => {
+    fetchSources();
+  }, [fetchSources]);
+
+  // Duration timer & live mic level polling during recording
+  useEffect(() => {
+    let micPollId: number | null = null;
+
     if (isRecording && !isPaused) {
-      timerRef.current = window.setInterval(() => { tickDuration(200); }, 200);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
+      timerRef.current = window.setInterval(() => {
+        tickDuration(200);
+      }, 200);
+
+      micPollId = window.setInterval(() => {
+        const level = getMicLevelDb();
+        setMicDb(level);
+      }, 80);
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      if (micPollId) {
+        clearInterval(micPollId);
+        micPollId = null;
+      }
+      setMicDb(-100);
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (micPollId) clearInterval(micPollId);
+    };
   }, [isRecording, isPaused, tickDuration]);
 
   const handleStop = async () => {
@@ -36,6 +66,9 @@ export const Deck: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}.${tenths}`;
   };
 
+  // Compute 0-100% normalized mic volume for meter
+  const micNormalizedPercent = Math.max(0, Math.min(100, Math.round(((micDb + 60) / 60) * 100)));
+
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-amber-500/25 bg-black/20 p-5 backdrop-blur-md shadow-2xl">
       {/* Top Deck Title & Real-Time Status Badge */}
@@ -45,20 +78,45 @@ export const Deck: React.FC = () => {
             Astrolabe Capture Deck
           </span>
           {isRecording && (
-            <span className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
-              config.target_type === 'audio_only'
-                ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
-                : 'bg-red-500/20 text-red-300 border-red-500/40'
-            }`}>
-              <span className={`h-1.5 w-1.5 rounded-full animate-ping ${
-                config.target_type === 'audio_only' ? 'bg-purple-400' : 'bg-red-500'
-              }`} />
+            <span
+              className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold border ${
+                config.target_type === 'audio_only'
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                  : 'bg-red-500/20 text-red-300 border-red-500/40'
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full animate-ping ${
+                  config.target_type === 'audio_only' ? 'bg-purple-400' : 'bg-red-500'
+                }`}
+              />
               {config.target_type === 'audio_only'
-                ? (isPaused ? 'VOICE PAUSED' : 'VOICE REC')
-                : (isPaused ? 'PAUSED' : 'REC')}
+                ? isPaused
+                  ? 'VOICE PAUSED'
+                  : 'VOICE REC'
+                : isPaused
+                ? 'PAUSED'
+                : 'REC'}
             </span>
           )}
         </div>
+
+        {/* Live Mic Activity Visualizer */}
+        {isRecording && config.include_microphone && (
+          <div className="flex items-center gap-1.5 bg-black/40 border border-slate-800 px-2 py-1 rounded-md text-[10px]">
+            <Volume2 className="h-3 w-3 text-astral-amber animate-pulse" />
+            <span className="text-slate-400 font-mono">Mic:</span>
+            <div className="w-16 h-1.5 bg-slate-800 rounded-full overflow-hidden flex">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-amber-500 transition-all duration-75"
+                style={{ width: `${micNormalizedPercent}%` }}
+              />
+            </div>
+            <span className="text-slate-400 font-mono text-[9px] w-6 text-right">
+              {micDb > -90 ? `${Math.round(micDb)}dB` : 'mute'}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Error Banner */}
@@ -68,6 +126,15 @@ export const Deck: React.FC = () => {
           <span>{error}</span>
         </div>
       )}
+
+      {/* Capture Source Selector (Entire Screen vs Specific Windows) */}
+      <SourceSelector
+        sources={sources}
+        selectedSourceId={selectedSourceId}
+        isRecording={isRecording}
+        onSelectSource={selectSource}
+        onRefresh={fetchSources}
+      />
 
       {/* Controls: Audio + Camera Overlay Toggle + FPS */}
       <div className="flex items-center justify-between border-t border-slate-700/40 pt-3 text-xs text-slate-200">
@@ -80,7 +147,7 @@ export const Deck: React.FC = () => {
               onChange={(e) => updateConfig({ include_microphone: e.target.checked })}
               className="accent-astral-amber rounded"
             />
-            <span>Microphone</span>
+            <span>Microphone Audio</span>
           </label>
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input
@@ -110,6 +177,7 @@ export const Deck: React.FC = () => {
         {/* 30 FPS / 60 FPS Toggle */}
         <div className="flex items-center gap-1 bg-slate-950/40 p-1 rounded-lg border border-slate-700/40 backdrop-blur-sm">
           <button
+            type="button"
             onClick={() => updateConfig({ fps: 30 })}
             disabled={isRecording}
             className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
@@ -122,6 +190,7 @@ export const Deck: React.FC = () => {
             30 FPS
           </button>
           <button
+            type="button"
             onClick={() => updateConfig({ fps: 60 })}
             disabled={isRecording}
             className={`px-2.5 py-0.5 rounded text-[11px] font-semibold transition-all ${
@@ -147,6 +216,7 @@ export const Deck: React.FC = () => {
             <>
               {/* Separate Button for Voice Only Record */}
               <button
+                type="button"
                 onClick={startVoiceOnlyRecording}
                 disabled={isLoading}
                 className="flex items-center gap-2 rounded-lg border border-purple-500/50 bg-purple-950/40 px-3.5 py-2 text-xs font-semibold text-purple-200 hover:bg-purple-900/60 hover:border-purple-400 hover:text-white transition-all shadow-md shadow-purple-950/30 active:scale-95 disabled:opacity-50"
@@ -158,19 +228,23 @@ export const Deck: React.FC = () => {
 
               {/* Primary Screen / Window Record Button */}
               <button
+                type="button"
                 onClick={startRecording}
                 disabled={isLoading}
                 className="flex items-center gap-2 rounded-lg bg-astral-amber px-4 py-2 text-xs font-semibold text-slate-950 hover:bg-amber-400 transition-all shadow-lg shadow-astral-amber/20 active:scale-95 disabled:opacity-50"
                 title="Record Selected Screen or Window"
               >
                 <Play className="h-4 w-4 fill-slate-950" />
-                <span>Record Screen</span>
+                <span>
+                  {config.target_type === 'window' ? 'Record Window' : 'Record Screen'}
+                </span>
               </button>
             </>
           ) : (
             <>
               {isPaused ? (
                 <button
+                  type="button"
                   onClick={resumeRecording}
                   className="flex items-center gap-1.5 rounded-lg border border-astral-amber/40 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-astral-amber hover:bg-slate-800/80 transition-all"
                 >
@@ -179,6 +253,7 @@ export const Deck: React.FC = () => {
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={pauseRecording}
                   className="flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-900/60 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-800/80 transition-all"
                 >
@@ -188,6 +263,7 @@ export const Deck: React.FC = () => {
               )}
 
               <button
+                type="button"
                 onClick={handleStop}
                 disabled={isLoading}
                 className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-xs font-semibold text-white hover:bg-red-500 transition-all shadow-lg shadow-red-600/20 active:scale-95 disabled:opacity-70"

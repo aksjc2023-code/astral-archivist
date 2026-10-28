@@ -4,14 +4,24 @@ let activeStream: MediaStream | null = null;
 let activeRecorder: MediaRecorder | null = null;
 let recordedChunks: Blob[] = [];
 
-// Resources for canvas compositor & audio mixer
+// Persistent media resources & element handles
 let displayStreamRef: MediaStream | null = null;
 let cameraStreamRef: MediaStream | null = null;
 let micStreamRef: MediaStream | null = null;
 let screenVideoEl: HTMLVideoElement | null = null;
 let cameraVideoEl: HTMLVideoElement | null = null;
 let animFrameId: number | null = null;
+
+// Persistent Web Audio Graph (Prevents V8 Garbage Collection of live mixer streams)
 let audioContext: AudioContext | null = null;
+let sysStreamWrapper: MediaStream | null = null;
+let micStreamWrapper: MediaStream | null = null;
+let sysAudioSourceNode: MediaStreamAudioSourceNode | null = null;
+let micAudioSourceNode: MediaStreamAudioSourceNode | null = null;
+let audioDestinationNode: MediaStreamAudioDestinationNode | null = null;
+let micGainNode: GainNode | null = null;
+let sysGainNode: GainNode | null = null;
+let micAnalyserNode: AnalyserNode | null = null;
 
 export const isMediaRecordingSupported = (): boolean => {
   return typeof navigator !== 'undefined' && !!navigator.mediaDevices;
@@ -31,6 +41,26 @@ export const blobToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
+/**
+ * Returns current microphone audio level in dB (-100 to 0) for UI metering
+ */
+export const getMicLevelDb = (): number => {
+  if (!micAnalyserNode) return -100;
+  try {
+    const pcmData = new Float32Array(micAnalyserNode.fftSize);
+    micAnalyserNode.getFloatTimeDomainData(pcmData);
+    let sumSquares = 0;
+    for (let i = 0; i < pcmData.length; i++) {
+      sumSquares += pcmData[i] * pcmData[i];
+    }
+    const rms = Math.sqrt(sumSquares / pcmData.length);
+    if (rms <= 0.00001) return -100;
+    return Math.max(-100, Math.min(0, 20 * Math.log10(rms)));
+  } catch {
+    return -100;
+  }
+};
+
 export const startRealCapture = async (
   config: RecordingConfig,
   isCameraOn: boolean = false,
@@ -43,9 +73,9 @@ export const startRealCapture = async (
     const isAudioOnly = config.target_type === 'audio_only';
 
     if (isAudioOnly) {
-      // ==========================================
+      // ==============================================================
       // 1. PURE AUDIO / VOICE-ONLY RECORDING MODE
-      // ==========================================
+      // ==============================================================
       let micStream: MediaStream | null = null;
       try {
         micStream = await navigator.mediaDevices.getUserMedia({
@@ -53,6 +83,8 @@ export const startRealCapture = async (
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
+            channelCount: 1,
+            sampleRate: 48000,
           },
           video: false,
         });
@@ -65,19 +97,40 @@ export const startRealCapture = async (
       }
 
       if (!micStream || micStream.getAudioTracks().length === 0) {
-        throw new Error('No audio tracks found from microphone.');
+        throw new Error('No audio tracks found from microphone. Please check microphone permissions in Windows Settings.');
       }
 
       micStreamRef = micStream;
-      activeStream = micStream;
 
-      // Select best supported audio container
+      // Set up persistent AudioContext for live metering and gain normalization
+      try {
+        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        audioContext = new AudioCtx();
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
+        micStreamWrapper = new MediaStream([micStream.getAudioTracks()[0]]);
+        micAudioSourceNode = audioContext.createMediaStreamSource(micStreamWrapper);
+        micAnalyserNode = audioContext.createAnalyser();
+        micAnalyserNode.fftSize = 512;
+        micAudioSourceNode.connect(micAnalyserNode);
+
+        audioDestinationNode = audioContext.createMediaStreamDestination();
+        micAudioSourceNode.connect(audioDestinationNode);
+        activeStream = audioDestinationNode.stream;
+      } catch (ctxErr) {
+        console.warn('AudioContext routing failed, using direct mic stream:', ctxErr);
+        activeStream = micStream;
+      }
+
+      // Best supported audio container
       const audioTypes = [
         'audio/webm;codecs=opus',
         'audio/webm',
+        'audio/ogg;codecs=opus',
         'audio/mp4',
         'audio/aac',
-        'audio/ogg;codecs=opus',
       ];
       let supportedAudioMime: string | undefined = undefined;
       for (const t of audioTypes) {
@@ -88,22 +141,54 @@ export const startRealCapture = async (
       }
 
       activeRecorder = supportedAudioMime
-        ? new MediaRecorder(activeStream, { mimeType: supportedAudioMime })
+        ? new MediaRecorder(activeStream, { mimeType: supportedAudioMime, audioBitsPerSecond: 192000 })
         : new MediaRecorder(activeStream);
 
     } else {
-      // ==========================================
-      // 2. SCREEN / DISPLAY RECORDING MODE
-      // ==========================================
+      // ==============================================================
+      // 2. SCREEN / DISPLAY RECORDING MODE (Entire Screen & Windows)
+      // ==============================================================
       const targetFps = config.fps || 30;
+      const targetSurface = config.target_type === 'window' ? 'window' : 'monitor';
 
-      // Capture display video & system audio (if requested)
-      displayStreamRef = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          frameRate: { ideal: targetFps, max: targetFps },
-        },
-        audio: config.include_system_audio ? true : false,
-      });
+      // Tiered DisplayMedia Request with Surface & Audio Fallbacks
+      try {
+        // Tier 1: Modern Chromium display constraints
+        displayStreamRef = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            displaySurface: targetSurface,
+            frameRate: { ideal: targetFps },
+          } as MediaTrackConstraints,
+          audio: config.include_system_audio
+            ? ({
+                echoCancellation: false,
+                noiseSuppression: false,
+                autoGainControl: false,
+                systemAudio: 'include',
+              } as unknown as boolean)
+            : false,
+        });
+      } catch (tier1Err) {
+        console.warn('Tier 1 getDisplayMedia failed, falling back to standard display request...', tier1Err);
+        try {
+          // Tier 2: Standard video + audio boolean
+          displayStreamRef = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: { ideal: targetFps } },
+            audio: config.include_system_audio ? true : false,
+          });
+        } catch (tier2Err) {
+          console.warn('Tier 2 getDisplayMedia failed, falling back to video only...', tier2Err);
+          // Tier 3: Basic video only (prevents system audio refusal from aborting screen share)
+          displayStreamRef = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: false,
+          });
+        }
+      }
+
+      if (!displayStreamRef || displayStreamRef.getVideoTracks().length === 0) {
+        throw new Error('No video track returned from screen capture prompt.');
+      }
 
       if (onEndedCallback) {
         const vTrack = displayStreamRef.getVideoTracks()[0];
@@ -135,32 +220,51 @@ export const startRealCapture = async (
         }
       }
 
-      // MIX AUDIO TRACKS (System Audio + Microphone)
+      // MIX AUDIO TRACKS (System Audio + Microphone) with persistent node storage
       const sysAudioTracks = displayStreamRef.getAudioTracks();
       const micAudioTracks = micStreamRef ? micStreamRef.getAudioTracks() : [];
       let mixedAudioTrack: MediaStreamTrack | null = null;
 
-      if (sysAudioTracks.length > 0 && micAudioTracks.length > 0) {
-        // Both system audio AND microphone audio are active -> Mix them using Web Audio API
+      if (sysAudioTracks.length > 0 || micAudioTracks.length > 0) {
         try {
-          audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+          const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          audioContext = new AudioCtx();
           if (audioContext.state === 'suspended') {
             await audioContext.resume();
           }
-          const destination = audioContext.createMediaStreamDestination();
-          const sysSource = audioContext.createMediaStreamSource(new MediaStream([sysAudioTracks[0]]));
-          const micSource = audioContext.createMediaStreamSource(new MediaStream([micAudioTracks[0]]));
-          sysSource.connect(destination);
-          micSource.connect(destination);
-          mixedAudioTrack = destination.stream.getAudioTracks()[0] || null;
+
+          audioDestinationNode = audioContext.createMediaStreamDestination();
+
+          // Connect System Audio if present
+          if (sysAudioTracks.length > 0) {
+            sysStreamWrapper = new MediaStream([sysAudioTracks[0]]);
+            sysAudioSourceNode = audioContext.createMediaStreamSource(sysStreamWrapper);
+            sysGainNode = audioContext.createGain();
+            sysGainNode.gain.value = 1.0;
+            sysAudioSourceNode.connect(sysGainNode);
+            sysGainNode.connect(audioDestinationNode);
+          }
+
+          // Connect Microphone Audio if present
+          if (micAudioTracks.length > 0) {
+            micStreamWrapper = new MediaStream([micAudioTracks[0]]);
+            micAudioSourceNode = audioContext.createMediaStreamSource(micStreamWrapper);
+            micGainNode = audioContext.createGain();
+            micGainNode.gain.value = 1.15; // Subtle boost for spoken clarity
+
+            micAnalyserNode = audioContext.createAnalyser();
+            micAnalyserNode.fftSize = 512;
+
+            micAudioSourceNode.connect(micAnalyserNode);
+            micAudioSourceNode.connect(micGainNode);
+            micGainNode.connect(audioDestinationNode);
+          }
+
+          mixedAudioTrack = audioDestinationNode.stream.getAudioTracks()[0] || null;
         } catch (mixErr) {
-          console.warn('Web Audio API mixing error, falling back to mic track:', mixErr);
+          console.warn('Web Audio API mixing error, falling back to direct track:', mixErr);
           mixedAudioTrack = micAudioTracks[0] || sysAudioTracks[0] || null;
         }
-      } else if (micAudioTracks.length > 0) {
-        mixedAudioTrack = micAudioTracks[0];
-      } else if (sysAudioTracks.length > 0) {
-        mixedAudioTrack = sysAudioTracks[0];
       }
 
       // 3. Camera PiP Overlay Compositing (if enabled)
@@ -190,6 +294,14 @@ export const startRealCapture = async (
         screenVideoEl.playsInline = true;
         await screenVideoEl.play();
 
+        // Ensure video dimensions are loaded before sizing canvas (prevents 0x0 canvas bug)
+        if (screenVideoEl.videoWidth === 0) {
+          await new Promise<void>((resolve) => {
+            screenVideoEl!.onloadedmetadata = () => resolve();
+            setTimeout(resolve, 500);
+          });
+        }
+
         cameraVideoEl = document.createElement('video');
         cameraVideoEl.srcObject = cameraStreamRef;
         cameraVideoEl.muted = true;
@@ -207,7 +319,7 @@ export const startRealCapture = async (
           // A) Draw base screen capture
           ctx.drawImage(screenVideoEl, 0, 0, w, h);
 
-          // B) Draw circular camera PiP overlay in recommended position (Bottom-Right, 0.5x size)
+          // B) Draw circular camera PiP overlay in Bottom-Right
           if (cameraVideoEl.readyState >= 2) {
             const diameter = Math.round(Math.min(Math.max(w * 0.08, 100), 140));
             const radius = diameter / 2;
@@ -293,7 +405,7 @@ export const startRealCapture = async (
       }
     };
 
-    activeRecorder.start(250);
+    activeRecorder.start(150); // Flush chunks every 150ms to ensure no trailing audio loss
     return true;
   } catch (err) {
     console.warn('Real screen/audio capture start failed:', err);
@@ -356,6 +468,34 @@ const cleanupAllStreams = (): void => {
     cameraVideoEl.srcObject = null;
     cameraVideoEl = null;
   }
+
+  // Disconnect audio nodes before closing context
+  try {
+    if (sysAudioSourceNode) {
+      sysAudioSourceNode.disconnect();
+      sysAudioSourceNode = null;
+    }
+    if (micAudioSourceNode) {
+      micAudioSourceNode.disconnect();
+      micAudioSourceNode = null;
+    }
+    if (sysGainNode) {
+      sysGainNode.disconnect();
+      sysGainNode = null;
+    }
+    if (micGainNode) {
+      micGainNode.disconnect();
+      micGainNode = null;
+    }
+    if (micAnalyserNode) {
+      micAnalyserNode.disconnect();
+      micAnalyserNode = null;
+    }
+  } catch {}
+
+  sysStreamWrapper = null;
+  micStreamWrapper = null;
+  audioDestinationNode = null;
 
   if (audioContext && audioContext.state !== 'closed') {
     audioContext.close().catch(() => {});
