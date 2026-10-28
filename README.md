@@ -1,177 +1,247 @@
-# 🌌 THE ASTRAL ARCHIVIST
-### Celestial Recording Studio & Offline Non-Linear Video Editor
+# 🌌 The Astral Archivist
 
-[![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-blue.svg?logo=tauri&logoColor=white)](https://tauri.app/)
-[![React 18](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Vite](https://img.shields.io/badge/Vite-6.0-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev/)
-[![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+> **Offline celestial screen recorder, encrypted media vault, and AI-accelerated multi-track video editor.**
+
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2.0-24C8D8.svg?logo=tauri&logoColor=white)](https://tauri.app/)
+[![React 19](https://img.shields.io/badge/React-19.0-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript 5.7](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite 6](https://img.shields.io/badge/Vite-6.0-646CFF.svg?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Tailwind CSS 3.4](https://img.shields.io/badge/TailwindCSS-3.4-38B2AC.svg?logo=tailwind-css&logoColor=white)](https://tailwindcss.com/)
+[![Local AI Whisper](https://img.shields.io/badge/AI-WebGPU%20Whisper-orange.svg)](https://huggingface.co/docs/transformers.js)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ---
 
-## 🔮 Overview
+<p align="center">
+  <img src="docs/assets/editor-timeline.png" alt="The Astral Archivist Scarlet Multi-Track NLE Editor" width="100%">
+</p>
 
-**The Astral Archivist** is an ultra-modern, local-first multimedia creation suite designed for content creators, researchers, and digital storytellers. It unifies a high-performance **Celestial Screen & Webcam Recording Studio**, an **Encrypted Archive Library**, and a **Desktop-Grade Multi-Track Video Editor** with local AI transcription—all running 100% offline with zero cloud latency and total data sovereignty.
+## 🔮 What is The Astral Archivist?
 
-```
-                              ┌──────────────────────────────────────────────┐
-                              │            THE ASTRAL ARCHIVIST              │
-                              │           Tauri v2 Desktop App               │
-                              └──────────────────────┬───────────────────────┘
-                                                     │
-               ┌─────────────────────────────────────┼─────────────────────────────────────┐
-               │                                     │                                     │
-               ▼                                     ▼                                     ▼
- ┌───────────────────────────┐         ┌───────────────────────────┐         ┌───────────────────────────┐
- │       STUDIO SUITE        │         │      ARCHIVE LIBRARY      │         │     SCARLET NLE EDITOR    │
- ├───────────────────────────┤         ├───────────────────────────┤         ├───────────────────────────┤
- │ • Multi-source recorder   │         │ • High-density cards      │         │ • 5-Track virtual timeline│
- │ • Sacred camera mandala   │         │ • Dynamic thumbnails      │         │ • Video, Audio, Titles,   │
- │ • System + Mic audio mix  │         │ • Inline video player     │         │   Stickers & Filter tracks│
- │ • Invisible Grimoire      │         │ • One-click editor import │         │ • On-device Whisper AI    │
- │   teleprompter window     │         │ • Renaming & vault delete │         │ • Client-side FFmpeg WASM │
- └───────────────────────────┘         └───────────────────────────┘         └───────────────────────────┘
+**The Astral Archivist** is an ultra-modern, local-first multimedia creation suite built for creators, educators, and knowledge archivists who refuse to trade privacy for productivity. Powered by **Tauri v2** and **Rust**, it unifies three essential production tools into a single lightning-fast desktop experience:
+
+1. **Astrolabe Capture Studio**: Multi-source screen, window, and voice recorder featuring a sacred circular camera HUD and OS-level private teleprompting.
+2. **Astral Vault Library**: A local SQLite-indexed media catalog with instant frame thumbnails, in-app playback, and bulk vault management.
+3. **Scarlet Multi-Track NLE Editor**: A professional 7-track non-linear video editor with local WebGPU speech-to-text, transcript-driven cutting, and WebCodecs hardware-accelerated rendering.
+
+**100% Offline. Zero Cloud Subscriptions. Total Data Sovereignty.**
+
+---
+
+## 🏛️ System Architecture
+
+```mermaid
+graph TB
+    subgraph NativeOS ["🖥️ Native OS Shell (Rust & Tauri v2)"]
+        WIN32["Win32 DWM / GDI Window & Screen Enum"]
+        AFFINITY["WDA_EXCLUDEFROMCAPTURE (Invisible Prompter)"]
+        SQLITE["Embedded SQLite Vault (rusqlite)"]
+        FS["Zero-Copy Local Storage Pipeline"]
+    end
+
+    subgraph ClientCore ["⚡ Multimedia & Audio Engine (Web APIs)"]
+        AUDIOMIX["Web Audio API Multi-Source Mixer (System + Mic)"]
+        VUMETER["Live Decibel (dB) Peak Metering"]
+        WEBCODECS["WebCodecs Hardware VideoEncoder / AudioEncoder"]
+        FFMPEG["FFmpeg WASM & mp4-muxer Export Pipeline"]
+    end
+
+    subgraph UserInterface ["✨ Celestial UI (React 19 + TypeScript + Tailwind)"]
+        STUDIO["Astrolabe Capture Deck & Sacred Mandala HUD"]
+        VAULT["Vault Archive Grid, Player Modal & Bulk Purge"]
+        SCARLET["Scarlet 7-Track NLE Timeline (<0.4ms EDL Engine)"]
+        WHISPER["On-Device Whisper AI Speech-to-Text (WebGPU INT8)"]
+    end
+
+    WIN32 --> STUDIO
+    AFFINITY --> STUDIO
+    SQLITE <--> VAULT
+    FS <--> SCARLET
+    AUDIOMIX --> STUDIO
+    VUMETER --> STUDIO
+    WEBCODECS --> SCARLET
+    FFMPEG --> SCARLET
+    WHISPER --> SCARLET
 ```
 
 ---
 
-## ✨ Key Features
+## ✨ Core Pillars & Feature Tour
 
-### 🎙️ 1. Studio Recording Suite
-- **Flexible Capture Modes**: Screen + Camera composite, Screen only, or high-fidelity Voice-only recording.
-- **Astral Camera Mandala**: Movable, resizable circular webcam overlay with animated celestial borders.
-- **Grimoire Teleprompter**: A dedicated, floating transparent note-taking and script prompter with OS window capture exclusion (`WDA_EXCLUDEFROMCAPTURE`), keeping your notes invisible in recordings.
-- **Multi-Source Audio Routing**: Synchronous hardware mixing of system display audio and microphone tracks.
+### 🎙️ 1. Astrolabe Capture Studio
 
-### 🏛️ 2. Vault Archive Library
-- **Visual Archive Grid**: Instant access to all recorded takes and voice notes with generated frame thumbnails.
-- **Full Player Modal**: In-app playback with scrubber, duration stamps, and audio waveform indicators.
-- **One-Click Timeline Transfer**: Open any saved take directly in the multi-track editor with automatic timeline synchronization.
-- **Atomic Operations**: Rename, filter by media type (Video / Audio), or delete recordings from the local database.
+Capture every dimension of your workflow with ultra-low CPU overhead.
+
+<p align="center">
+  <img src="docs/assets/capture-studio.png" alt="Astrolabe Capture Studio Interface" width="90%">
+</p>
+
+- **Three Dedicated Capture Modes**:
+  - **Screen / Display**: Capture high-refresh primary or secondary monitors with native Win32 GDI enumeration.
+  - **Individual Window**: Select any running window with real-time DWM cloaking filters (`DWMWA_CLOAKED`) that omit ghost or minimized background processes.
+  - **Voice-Only Note**: Instant high-fidelity audio recorder with live visualizer for podcasting, memos, and voiceovers.
+- **Doctor Strange Sacred Mandala Webcam**: Draggable, resizable circular webcam HUD framed with celestial animated golden runes.
+- **Invisible Grimoire Teleprompter**: A floating script prompter protected by Windows `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)`. You can read your notes directly off your screen while the recorded video remains completely pristine.
+- **Synchronous Dual-Track Audio Mixer**: Web Audio API mixer combining system display audio and microphone input into a phase-aligned stereo stream with live peak dB meters.
+
+---
+
+### 🏛️ 2. Astral Vault Library
+
+Keep your creative archive structured, indexed, and completely private on your local disk.
+
+<p align="center">
+  <img src="docs/assets/vault-library.png" alt="Astral Vault Library Interface" width="90%">
+</p>
+
+- **High-Density Media Cards**: Automatically generated video thumbnails, formatted duration stamps, creation dates, and type badges (Video vs. Audio).
+- **In-App Playback Modal**: Full-featured preview monitor with instant scrubbing, timecodes, and waveform visualization.
+- **One-Click Timeline Send**: Send any take directly from the Vault into the Scarlet NLE timeline with automatic track placement.
+- **Bulk Vault Management**:
+  - Search and filter by media type (`All`, `Videos`, `Audio`).
+  - Safe individual asset deletion with SQLite cascading cleanup.
+  - **"Delete All" Vault Purge**: Clean slate workflow with double-confirmation dialog to safely erase recordings and thumbnails from disk.
+
+---
 
 ### ✂️ 3. Scarlet Multi-Track NLE Editor
-- **5-Track Non-Destructive Editing Engine**:
-  - `Track 1`: **Effects & Filters** (Cyberpunk Neon, Vintage Film, Monochrome Noir, Cinematic Warmth, VHS Glitch)
-  - `Track 2`: **Stickers & Overlays** (Subscribe badge, Glowing arrows, Fire, Astral runes)
-  - `Track 3`: **Titles & Subtitles** (Cinematic serif, Neon bold, Minimal lower-thirds)
-  - `Track 4`: **Composite Video** (Multi-clip timeline with ripple compaction, razor splits, and transitions)
-  - `Track 5`: **Audio & Voiceover** (Individual track gain, mute/lock controls, background music layering)
-- **Drag-and-Drop Workflow**:
-  - Drag clips, filters, stickers, and transitions directly into target tracks or onto video clips.
-  - Interactive edge-trimming with yellow hover handles to adjust clip durations seamlessly.
-- **Project Persistence**:
-  - Full project state preservation across tab switches.
-  - Project management bar with project naming, `+ New`, `💾 Save`, and `📂 Open` actions backed by local storage and JSON export.
-- **High-Precision Video Preview**:
-  - Dual monitor mode (Source Clip vs. Master Timeline).
-  - 60 FPS playhead scrubbing with millisecond-level timecode displays (`00:00:00:000`).
-  - Interactive zoom control (`Ctrl + Wheel` or zoom slider) for precise cutting.
-- **On-Device Whisper AI & Auto-Clean**:
-  - Local speech-to-text powered by ONNX / WebGPU Transformers.
-  - Text-based transcript editing: deleting words in transcript automatically slices corresponding video frames.
+
+A desktop-grade non-linear editor engineered for fluid, non-destructive storytelling.
+
+<p align="center">
+  <img src="docs/assets/editor-timeline.png" alt="Scarlet Multi-Track NLE Timeline" width="90%">
+</p>
+
+- **7 Dedicated Editing Tracks**:
+  - `FX`: Visual Filters & LUTs (Cyberpunk Neon, Vintage Film, Monochrome Noir, Cinematic Warmth, VHS Glitch).
+  - `TR`: Video Transitions (Crossfade, Wipe, Zoom, Glitch, Dissolve).
+  - `ST`: Overlay Stickers & Graphics (Subscribe badges, Glowing arrows, Fire, Celestial runes).
+  - `TT`: Animated Titles & Lower-Thirds.
+  - `CC`: Synchronized Captions & Subtitles.
+  - `V1`: Primary Video Track with drag-and-drop clip rearrangement and interactive yellow trim handles.
+  - `A1`: Audio & Voiceover Track with dedicated volume envelope, mute, and solo switches.
+- **On-Device Whisper AI Speech-to-Text**:
+  - Powered by `@huggingface/transformers` running quantized INT8 models locally via WebGPU.
+  - **Transcript-Driven Video Cutting**: Edit video like a document. Select and delete filler words ("um", "ah", stuttered takes) directly in the text transcript to automatically ripple-slice the underlying video frames in <0.4ms.
+- **Dual Video Preview Monitor**:
+  - Source Clip Monitor (inspect raw vault footage before placement).
+  - Master Program Monitor (real-time canvas composite with applied filters and overlays).
+  - SMPTE standard timecode displays (`00:00:00:000`) and interactive zoom (`Ctrl + Wheel`).
+- **Flexible Export Engine**:
+  - **Lossless Stream-Copy**: Slice and splice identical codecs instantly without re-encoding (`-c copy`).
+  - **WebCodecs Hardware Acceleration**: High-speed MP4/H.264 rendering with client-side container multiplexing (`mp4-muxer`).
 
 ---
 
 ## 🛠️ Technology Stack
 
-| Layer | Technology | Description |
-| :--- | :--- | :--- |
-| **Desktop Shell** | [Tauri v2](https://tauri.app/) (Rust) | Native Windows/macOS/Linux windowing, OS IPC, low memory footprint |
-| **Frontend Framework** | [React 18](https://react.dev/) + [Vite 6](https://vitejs.dev/) | High-performance component rendering and lightning-fast HMR |
-| **State Management** | [Zustand](https://github.com/pmndrs/zustand) | Decoupled reactive stores for Recorder, Vault, Timeline, and Editor |
-| **Styling** | [Tailwind CSS 3](https://tailwindcss.com/) | Curated dark-mode aesthetic with custom astral glassmorphic tokens |
-| **Icons** | [Lucide React](https://lucide.dev/) | Clean, consistent vector iconography |
-| **AI Inference** | [@huggingface/transformers](https://huggingface.co/docs/transformers.js) | WebGPU-accelerated local Whisper transcription |
-| **Video Processing** | [@ffmpeg/ffmpeg](https://ffmpegwasm.netlify.app/) WebAssembly | Client-side format transcoding, filtergraphs, and container packaging |
+| Layer | Technology | Version | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Desktop Shell** | [Tauri](https://tauri.app/) | `v2.0` | Secure Rust-based native windowing, low RAM footprint, OS capabilities |
+| **OS Integration** | [windows-rs](https://github.com/microsoft/windows-rs) | `0.58` | Win32 DWM cloaking, GDI monitor enumeration, capture affinity |
+| **Database** | [rusqlite](https://github.com/rusqlite/rusqlite) | `0.32` | Bundled embedded SQLite database for vault media cataloging |
+| **Async Runtime** | [tokio](https://tokio.rs/) | `1.40` | High-throughput asynchronous Rust backend execution |
+| **Frontend UI** | [React](https://react.dev/) | `19.0` | Reactive component tree and modern concurrency |
+| **Bundler & Tooling** | [Vite](https://vitejs.dev/) | `6.0` | Sub-millisecond HMR and optimized production bundle |
+| **Language** | [TypeScript](https://www.typescriptlang.org/) | `5.7` | Strict end-to-end type safety across IPC and EDL models |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) | `3.4` | Custom celestial dark aesthetic, glassmorphism, glowing accents |
+| **State Management** | [Zustand](https://github.com/pmndrs/zustand) | `5.0` | Decoupled reactive state for Studio, Vault, and Timeline engines |
+| **On-Device AI** | [@huggingface/transformers](https://huggingface.co/docs/transformers.js) | `4.3` | Client-side Whisper speech-to-text with WebGPU acceleration |
+| **Video Encoding** | [WebCodecs API](https://developer.mozilla.org/en-US/docs/Web/API/WebCodecs_API) | Native | Hardware-accelerated `VideoEncoder` & `AudioEncoder` |
+| **Container Muxing**| [mp4-muxer](https://github.com/Vanilagy/mp4-muxer) | `5.2` | Fast client-side MP4 container creation |
+| **WASM Processing** | [@ffmpeg/ffmpeg](https://ffmpegwasm.netlify.app/) | `0.12` | In-browser transcoding and format normalization |
+| **Iconography** | [Lucide React](https://lucide.dev/) | `1.16` | Consistent, accessible vector icon suite |
 
 ---
 
-## 📁 Repository Structure
+## ⌨️ Keyboard Shortcuts & Workflow
 
-```
-.
-├── src/
-│   ├── assets/               # Celestial backgrounds, logos, and camera mandalas
-│   ├── components/
-│   │   ├── grimoire/         # Notes & teleprompter window
-│   │   ├── library/          # Vault archive library view & thumbnail cache
-│   │   ├── recorder/         # Recording deck, source selectors, webcam overlay
-│   │   ├── timeline/         # Studio playback scrubber
-│   │   ├── transcript/       # Voice note transcribe reader
-│   │   └── vault/            # Video playback modal
-│   ├── editor/
-│   │   ├── ScarletEditorApp.tsx  # Central NLE Video Editor application
-│   │   ├── editorBridge.ts       # Cross-tab state sharing & project loader
-│   │   ├── core/                 # Timeline mathematical engine, DSP & filtergraphs
-│   │   ├── export/               # FFmpeg WASM exporter pipeline
-│   │   ├── services/             # Offline Whisper AI speech recognition
-│   │   └── ui/
-│   │       ├── common/           # Scarlet UI buttons and icons
-│   │       ├── layout/           # Activity dock, sub-nav sidebar, status footer
-│   │       ├── modals/           # Export modal, capture dialog, fault bar
-│   │       ├── player/           # Dual-screen video preview monitor
-│   │       ├── timeline/         # MultiTrackTimeline with drag & trim handles
-│   │       └── workspace/        # Media drawer, effects, stickers, titles
-│   ├── store/                # Zustand stores (useRecorderStore, useVaultStore, useTimelineStore)
-│   ├── types/                # IPC interfaces, EDL models, and recording metadata
-│   ├── utils/                # Media utilities, canvas composite engine, audio mixer
-│   ├── App.tsx               # Main window layout & tab coordinator
-│   └── main.tsx              # React DOM entry point
-├── src-tauri/
-│   ├── src/
-│   │   ├── commands/         # Rust IPC commands (capture, vault, media, ai)
-│   │   ├── engine/           # Screen recording, FFmpeg probe, native Whisper
-│   │   └── utils/            # Vault storage & filesystem helpers
-│   ├── Cargo.toml            # Rust backend dependencies
-│   └── tauri.conf.json       # Tauri window and capability configuration
-├── public/                   # Static icons and assets
-├── package.json              # NPM dependencies and scripts
-└── tsconfig.json             # TypeScript compiler configuration
-```
+| Shortcut | Context | Action |
+| :--- | :--- | :--- |
+| `Space` | Global / Editor | Play / Pause master timeline or preview monitor |
+| `C` / `Ctrl + B` | Timeline | Razor split active clip at playhead position |
+| `Delete` / `Backspace` | Timeline | Ripple delete selected clip / block |
+| `Ctrl + Z` | Editor | Undo last timeline edit or trim |
+| `Ctrl + Y` / `Ctrl + Shift + Z` | Editor | Redo timeline action |
+| `Ctrl + Scroll Wheel` | Timeline | Zoom timeline in / out smoothly |
+| `J` / `K` / `L` | Player | Shuttle reverse, pause, shuttle forward |
+| `Home` / `End` | Timeline | Jump playhead to beginning / end of sequence |
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- **Node.js**: v18.0+ or v20.0+
-- **Rust**: `rustc` and `cargo` (latest stable toolchain)
-- **OS Dependencies** (Windows: C++ Build Tools; Linux: WebKit2GTK / libappindicator)
 
-### Installation
+Ensure you have the following installed on your development workstation:
+- **Node.js**: v18.0 or later (v20+ recommended)
+- **Rust Toolchain**: `rustc` and `cargo` (1.77+ stable) — [Install Rust](https://www.rust-lang.org/tools/install)
+- **Windows Build Tools**: C++ Build Tools installed via Visual Studio Installer (for Windows users)
+
+### 1. Clone the Repository
+
 ```bash
-# Clone the repository
 git clone https://github.com/aksjc2023-code/astral-archivist.git
 cd astral-archivist
+```
 
-# Install frontend dependencies
+### 2. Install Dependencies
+
+```bash
 npm install
 ```
 
-### Development
+### 3. Launch Development Server
+
+Run the Vite dev server alongside the native Tauri v2 desktop shell:
+
 ```bash
-# Launch the full desktop application (Vite dev server + Tauri native shell)
 npm run tauri dev
 ```
 
-### Production Build
+*Note: On first run, Cargo will download and compile the Rust dependencies. Subsequent hot reloads compile in milliseconds.*
+
+### 4. Build Production Release
+
+Generate an optimized, standalone desktop installer:
+
 ```bash
 # Type check and build Vite frontend
 npm run build
 
-# Compile native release binary with Tauri
+# Compile release binary and installer via Tauri
 npm run tauri build
 ```
 
+The compiled binaries will be output to `src-tauri/target/release/bundle/`.
+
 ---
 
-## 🛡️ Security & Privacy
-- **Zero Cloud Leakage**: All recordings, transcripts, and video edits remain strictly on your local disk.
-- **Affinity Privacy**: The Grimoire teleprompter leverages Windows native API `WDA_EXCLUDEFROMCAPTURE` to keep private notes out of screen captures.
-- **Non-Destructive EDL**: Cuts, trims, and edits modify an in-memory Edit Decision List (EDL) without destroying the original source recordings.
+## 🛡️ Security, Privacy & Data Sovereignty
+
+- **100% Air-Gapped Capable**: The Astral Archivist does not send telemetry, analytics, or media to external servers. All recordings, transcripts, and edits live on your local machine.
+- **Affinity Privacy Shielding**: The Grimoire script prompter utilizes the native Windows OS flag `WDA_EXCLUDEFROMCAPTURE`. Even when recording your full desktop, your private scripts and notes are physically excluded by the Windows Desktop Window Manager (DWM).
+- **Non-Destructive EDL Architecture**: Edits, trims, and cuts are stored as non-destructive Edit Decision Lists (EDL). Your original recordings remain unaltered in the vault until you explicitly choose to delete them.
+
+---
+
+## 🤝 Contributing
+
+Contributions, issues, and feature proposals are welcome!
+1. Fork the Project.
+2. Create your Feature Branch (`git checkout -b feature/CelestialFeature`).
+3. Commit your Changes (`git commit -m 'feat: add celestial ripple enhancement'`).
+4. Push to the Branch (`git push origin feature/CelestialFeature`).
+5. Open a Pull Request.
 
 ---
 
 ## 📜 License
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+
+This project is open-source software licensed under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  <sub>Crafted with 🌌 by <b>The Astral Archivist Team</b>. Empowering sovereign storytelling.</sub>
+</p>
