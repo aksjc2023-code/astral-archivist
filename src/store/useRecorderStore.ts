@@ -44,7 +44,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
     target_type: 'monitor',
     include_microphone: true,
     include_system_audio: true,
-    fps: 30,
+    fps: 60,
     resolution_scale: 1.0,
     output_format: 'mp4',
   },
@@ -207,7 +207,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
           dataBase64: base64,
           durationMs,
           isAudioOnly,
-          fps: isAudioOnly ? 0 : (get().config.fps || 30),
+          fps: isAudioOnly ? 0 : (get().config.fps || 60),
         });
       } else {
         item = await invoke<VaultItem>('stop_recording');

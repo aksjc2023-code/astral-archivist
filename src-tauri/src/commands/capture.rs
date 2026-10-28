@@ -147,7 +147,7 @@ pub async fn save_captured_recording(
     state.session = None;
     state.is_paused = false;
 
-    let target_fps = fps.unwrap_or(30).clamp(15, 120);
+    let target_fps = fps.unwrap_or(60).clamp(15, 120);
 
     let raw_bytes = if let Some(b64) = data_base64 {
         decode_base64_str(&b64)?

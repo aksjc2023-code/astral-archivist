@@ -148,7 +148,7 @@ export const startRealCapture = async (
       // ==============================================================
       // 2. SCREEN / DISPLAY RECORDING MODE (Entire Screen & Windows)
       // ==============================================================
-      const targetFps = config.fps || 30;
+      const targetFps = config.fps || 60;
       const targetSurface = config.target_type === 'window' ? 'window' : 'monitor';
 
       // Tiered DisplayMedia Request with Surface & Audio Fallbacks

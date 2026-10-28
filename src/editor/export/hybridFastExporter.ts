@@ -98,7 +98,7 @@ export async function exportHybridVideo(
 
   const width = options.resolution?.width || 1920;
   const height = options.resolution?.height || 1080;
-  const fps = options.fps || 30;
+  const fps = options.fps || 60;
 
   onProgress?.('Preparing zero-copy source mounts...', 5);
   const srcName = options.sourceFileName || 'source.mp4';
