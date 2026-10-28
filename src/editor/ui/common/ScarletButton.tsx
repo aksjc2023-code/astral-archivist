@@ -74,8 +74,16 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
         className={className}
         {...props}
       >
-        {icon}
-        {children}
+        {icon && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
+        {children && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+            {children}
+          </span>
+        )}
       </button>
     );
   }
@@ -109,8 +117,16 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
         className={className}
         {...props}
       >
-        {icon}
-        {children}
+        {icon && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
+        {children && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+            {children}
+          </span>
+        )}
       </button>
     );
   }
@@ -139,8 +155,16 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
         className={className}
         {...props}
       >
-        {icon}
-        {children}
+        {icon && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
+        {children && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+            {children}
+          </span>
+        )}
       </button>
     );
   }
@@ -178,8 +202,16 @@ export const ScarletButton: React.FC<ScarletButtonProps> = ({
         disabled={disabled}
         {...props}
       >
-        {icon}
-        {children}
+        {icon && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            {icon}
+          </span>
+        )}
+        {children && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', whiteSpace: 'nowrap' }}>
+            {children}
+          </span>
+        )}
       </button>
       <div style={{ width: '1px', backgroundColor: 'rgba(22, 139, 255, 0.4)' }} />
       <button

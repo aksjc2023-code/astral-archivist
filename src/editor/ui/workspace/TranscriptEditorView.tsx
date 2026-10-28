@@ -507,21 +507,8 @@ export const TranscriptEditorView: React.FC<TranscriptEditorViewProps> = ({
               data-testid="btn-open-audio-enhancement"
               variant="primary"
               size="sm"
-              icon={<IconWand size={14} color="#FFFFFF" />}
+              icon={<IconWand size={13} color="#FFFFFF" />}
               onClick={onOpenAudioEnhancement}
-              style={{
-                borderRadius: '9999px',
-                padding: '5px 14px',
-                fontSize: '11px',
-                fontWeight: 600,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                background: 'linear-gradient(135deg, #168BFF 0%, #0052CC 100%)',
-                boxShadow: '0 2px 8px rgba(22, 139, 255, 0.35)',
-                whiteSpace: 'nowrap',
-                flexShrink: 0,
-              }}
               title="5-Stage Speech Cleansing: DeepFilterNet3 + Silero VAD + fdt-disfluency-tiny-4m"
             >
               Audio Enhancement
