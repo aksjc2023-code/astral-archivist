@@ -158,3 +158,92 @@ fn dirs_fallback() -> PathBuf {
         PathBuf::from(".")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn test_vault_sqlite_schema_and_crud() {
+        let temp_dir = std::env::temp_dir().join(format!("astral_test_{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let db_path = temp_dir.join("vault.db");
+        let conn = Connection::open(&db_path).unwrap();
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS recordings (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                filepath TEXT NOT NULL,
+                thumbnail_path TEXT NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                file_size_bytes INTEGER NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                fps INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                has_transcript INTEGER NOT NULL
+            )",
+            [],
+        ).unwrap();
+
+        let item = VaultItem {
+            id: "rec_001".into(),
+            title: "Test Sanctum Archive".into(),
+            filepath: "C:/test/rec.mp4".into(),
+            thumbnail_path: "C:/test/thumb.jpg".into(),
+            duration_ms: 12000,
+            file_size_bytes: 4096000,
+            width: 1920,
+            height: 1080,
+            fps: 60,
+            created_at: "2026-10-28T00:00:00Z".into(),
+            has_transcript: false,
+        };
+
+        // Insert
+        conn.execute(
+            "INSERT INTO recordings (
+                id, title, filepath, thumbnail_path, duration_ms,
+                file_size_bytes, width, height, fps, created_at, has_transcript
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                item.id,
+                item.title,
+                item.filepath,
+                item.thumbnail_path,
+                item.duration_ms,
+                item.file_size_bytes,
+                item.width,
+                item.height,
+                item.fps,
+                item.created_at,
+                item.has_transcript as i32
+            ],
+        ).unwrap();
+
+        // Read
+        let mut stmt = conn.prepare("SELECT title, fps FROM recordings WHERE id = ?1").unwrap();
+        let (title, fps): (String, u32) = stmt.query_row(params!["rec_001"], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }).unwrap();
+
+        assert_eq!(title, "Test Sanctum Archive");
+        assert_eq!(fps, 60);
+
+        // Update title
+        conn.execute("UPDATE recordings SET title = ?1 WHERE id = ?2", params!["Renamed Archive", "rec_001"]).unwrap();
+        let updated_title: String = conn.query_row("SELECT title FROM recordings WHERE id = 'rec_001'", [], |r| r.get(0)).unwrap();
+        assert_eq!(updated_title, "Renamed Archive");
+
+        // Delete
+        conn.execute("DELETE FROM recordings WHERE id = ?1", params!["rec_001"]).unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM recordings", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+

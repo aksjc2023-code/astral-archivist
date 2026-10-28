@@ -149,20 +149,21 @@ pub async fn save_captured_recording(
 
     let target_fps = fps.unwrap_or(60).clamp(15, 120);
 
-    let raw_bytes = if let Some(b64) = data_base64 {
-        decode_base64_str(&b64)?
-    } else if let Some(b) = bytes {
-        b
-    } else {
-        return Err("No recording payload provided".into());
-    };
-
     let vault = VaultStore::new().map_err(|e| e.to_string())?;
     let ext = if is_audio_only { "m4a" } else { "mp4" };
-    let output_path = vault.get_vault_dir().join(format!("recording_{}.{}", session_id, ext));
+    let mut output_path = vault.get_vault_dir().join(format!("recording_{}.{}", session_id, ext));
     let raw_temp = vault.get_vault_dir().join(format!("raw_{}.webm", session_id));
 
-    std::fs::write(&raw_temp, &raw_bytes).map_err(|e| format!("Failed to write raw capture: {}", e))?;
+    if !raw_temp.exists() {
+        let raw_bytes = if let Some(b) = bytes {
+            b
+        } else if let Some(b64) = data_base64 {
+            decode_base64_str(&b64)?
+        } else {
+            return Err("No recording payload provided".into());
+        };
+        std::fs::write(&raw_temp, &raw_bytes).map_err(|e| format!("Failed to write raw capture: {}", e))?;
+    }
 
     let ffmpeg = FFmpegEngine::get_ffmpeg_path();
     let mut cmd = std::process::Command::new(&ffmpeg);
@@ -194,41 +195,47 @@ pub async fn save_captured_recording(
     }
     cmd.arg(&output_path);
 
-    let output = cmd.output().map_err(|e| format!("Failed to spawn ffmpeg: {}", e))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("[save_captured_recording] Primary transcode failed: {}", stderr);
-
-        // Fallback pass: attempt relaxed transcode ignoring damaged headers
-        let mut retry_cmd = std::process::Command::new(&ffmpeg);
-        retry_cmd.arg("-y").arg("-err_detect").arg("ignore_err").arg("-i").arg(&raw_temp);
-
-        if is_audio_only {
-            retry_cmd.args([
-                "-vn",
-                "-c:a", "aac",
-                "-b:a", "128k",
-                "-movflags", "+faststart",
-            ]);
-        } else {
-            retry_cmd.args([
-                "-c:v", "copy",
-                "-c:a", "copy",
-                "-movflags", "+faststart",
-            ]);
+    let transcode_success = match cmd.output() {
+        Ok(output) if output.status.success() => {
+            let _ = std::fs::remove_file(&raw_temp);
+            true
         }
-        retry_cmd.arg(&output_path);
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            eprintln!("[save_captured_recording] Primary transcode failed: {}", stderr);
 
-        let retry_out = retry_cmd.output().map_err(|e| format!("Retry spawn error: {}", e))?;
-        let _ = std::fs::remove_file(&raw_temp);
+            // Fallback pass: attempt stream-copy transcode
+            let mut retry_cmd = std::process::Command::new(&ffmpeg);
+            retry_cmd.arg("-y").arg("-err_detect").arg("ignore_err").arg("-i").arg(&raw_temp);
 
-        if !retry_out.status.success() {
-            let err_msg = String::from_utf8_lossy(&retry_out.stderr);
-            return Err(format!("FFmpeg failed to transcode raw recording: {}", err_msg));
+            if is_audio_only {
+                retry_cmd.args(["-vn", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]);
+            } else {
+                retry_cmd.args(["-c:v", "copy", "-c:a", "copy", "-movflags", "+faststart"]);
+            }
+            retry_cmd.arg(&output_path);
+
+            if let Ok(retry_out) = retry_cmd.output() {
+                if retry_out.status.success() {
+                    let _ = std::fs::remove_file(&raw_temp);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
         }
-    } else {
-        let _ = std::fs::remove_file(&raw_temp);
+        Err(_) => false,
+    };
+
+    if !transcode_success {
+        // Zero-Data-Loss Fallback: preserve original high-fidelity raw webm container
+        eprintln!("[save_captured_recording] Transcoding unavailable; preserving raw container directly in vault.");
+        let fallback_ext = if is_audio_only { "weba" } else { "webm" };
+        let fallback_path = vault.get_vault_dir().join(format!("recording_{}.{}", session_id, fallback_ext));
+        let _ = std::fs::rename(&raw_temp, &fallback_path);
+        output_path = fallback_path;
     }
 
     let thumb_path = output_path.with_extension("jpg");

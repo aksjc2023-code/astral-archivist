@@ -201,10 +201,10 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
       let item: VaultItem;
 
       if (realBlob && session) {
-        const base64 = await blobToBase64(realBlob);
+        const buffer = await realBlob.arrayBuffer();
         item = await invoke<VaultItem>('save_captured_recording', {
           sessionId: session.session_id,
-          dataBase64: base64,
+          bytes: new Uint8Array(buffer),
           durationMs,
           isAudioOnly,
           fps: isAudioOnly ? 0 : (get().config.fps || 60),
