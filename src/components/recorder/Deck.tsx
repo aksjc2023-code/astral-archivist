@@ -178,23 +178,23 @@ export const Deck: React.FC = () => {
 
         {/* Configurable Visual Fidelity: Framerate & Quality Presets */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Framerate Selector */}
+          {/* Framerate Selector: 30 FPS / 60 FPS (60 FPS default) */}
           <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-700/50 backdrop-blur-sm">
             <span className="text-[10px] text-slate-400 uppercase font-mono px-1">FPS:</span>
-            {([24, 30, 60, 120] as const).map((rate) => (
+            {([30, 60] as const).map((rate) => (
               <button
                 key={rate}
                 type="button"
                 onClick={() => updateConfig({ fps: rate })}
                 disabled={isRecording}
-                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${
+                className={`px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all ${
                   config.fps === rate
                     ? 'bg-amber-500/20 text-astral-amber border border-amber-500/50 shadow-sm'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
-                title={`Record at ${rate} FPS`}
+                title={`Record at ${rate} FPS (${rate === 60 ? 'Smooth default' : 'Standard'})`}
               >
-                {rate}
+                {rate} FPS
               </button>
             ))}
           </div>

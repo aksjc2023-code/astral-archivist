@@ -19,7 +19,7 @@ export interface CaptureSource {
   height: number;
 }
 
-export type TargetFramerate = 24 | 30 | 60 | 120;
+export type TargetFramerate = 30 | 60;
 export type TargetResolutionScale = 1.0 | 0.75 | 0.5;
 export type VideoBitrateTier = 3000000 | 8000000 | 16000000 | 32000000;
 
