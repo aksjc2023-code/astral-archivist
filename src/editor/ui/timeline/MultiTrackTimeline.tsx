@@ -98,7 +98,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
       e.preventDefault();
       if (onScaleChange) {
         const delta = e.deltaY < 0 ? 0.15 : -0.15;
-        const nextScale = Math.max(0.4, Math.min(3.5, Number((scale + delta).toFixed(2))));
+        const nextScale = Math.max(0.2, Math.min(3.5, Number((scale + delta).toFixed(2))));
         onScaleChange(nextScale);
       }
     } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
@@ -193,7 +193,7 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
 
   const [volumePopoverTrackId, setVolumePopoverTrackId] = useState<string | null>(null);
 
-  const pxPerSec = 22 * scale;
+  const pxPerSec = 11 * scale;
   const totalTimelineWidthPx = Math.max(1400, duration * pxPerSec + 300);
 
   // Direct DOM transform mutation bypassing React render lifecycle for 60fps buttery smoothness
@@ -740,8 +740,12 @@ export const MultiTrackTimeline: React.FC<MultiTrackTimelineProps> = ({
     };
   }, [pxPerSec, duration, onSeek]);
 
-  // 5-second ruler tick intervals for clear, usable precision
-  const tickIntervalSec = scale > 1.5 ? 2 : 5;
+  // Dynamic ruler tick intervals to prevent label collision across wide zoom-out ranges
+  const tickIntervalSec =
+    pxPerSec < 6 ? 30 :
+    pxPerSec < 12 ? 15 :
+    pxPerSec < 20 ? 10 :
+    scale > 1.8 ? 2 : 5;
   const totalTicks = Math.ceil(duration / tickIntervalSec) + 4;
 
   const rulerTicks = React.useMemo(() => {
