@@ -428,8 +428,8 @@ export const startRealCapture = async (
         }
       }
 
-      // User-configured visual fidelity bitrate with smart framerate defaults
-      const videoBitsPerSecond = config.video_bitrate_bps || (targetFps >= 60 ? 12_000_000 : 6_000_000);
+      // User-configured visual encoding bitrate (Low: 4M, Med: 10M, High: 25M)
+      const videoBitsPerSecond = config.video_bitrate_bps || 10_000_000;
       activeRecorder = mimeType
         ? new MediaRecorder(activeStream, { mimeType, videoBitsPerSecond })
         : new MediaRecorder(activeStream, { videoBitsPerSecond });

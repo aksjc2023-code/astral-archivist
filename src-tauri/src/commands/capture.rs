@@ -142,6 +142,7 @@ pub async fn save_captured_recording(
     duration_ms: u64,
     is_audio_only: bool,
     fps: Option<u32>,
+    video_bitrate_bps: Option<u32>,
 ) -> Result<VaultItem, String> {
     let mut state = SESSION.lock().map_err(|_| "Failed to lock session state")?;
     state.session = None;
@@ -179,13 +180,32 @@ pub async fn save_captured_recording(
             "-movflags", "+faststart",
         ]);
     } else {
+        let bitrate_bps = video_bitrate_bps.unwrap_or(10_000_000).clamp(1_000_000, 100_000_000);
+        let bitrate_k = bitrate_bps / 1000;
+        let maxrate_k = (bitrate_bps as f64 * 1.25) as u32 / 1000;
+        let bufsize_k = (bitrate_bps as f64 * 2.0) as u32 / 1000;
+        let crf = if bitrate_bps <= 5_000_000 {
+            "26"
+        } else if bitrate_bps <= 15_000_000 {
+            "20"
+        } else {
+            "16"
+        };
+
+        let b_v_str = format!("{}k", bitrate_k);
+        let maxrate_str = format!("{}k", maxrate_k);
+        let bufsize_str = format!("{}k", bufsize_k);
+
         cmd.args([
             "-map", "0:v:0",
             "-map", "0:a?",
             "-r", &target_fps.to_string(),
             "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "23",
+            "-preset", "veryfast",
+            "-crf", crf,
+            "-b:v", &b_v_str,
+            "-maxrate", &maxrate_str,
+            "-bufsize", &bufsize_str,
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",

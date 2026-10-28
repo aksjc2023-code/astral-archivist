@@ -203,24 +203,23 @@ export const Deck: React.FC = () => {
           <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-700/50 backdrop-blur-sm">
             <span className="text-[10px] text-slate-400 uppercase font-mono px-1">Bitrate:</span>
             {[
-              { label: 'Draft', bps: 3_000_000 },
-              { label: 'Std', bps: 8_000_000 },
-              { label: 'High', bps: 16_000_000 },
-              { label: 'Master', bps: 32_000_000 },
+              { label: 'Low', bps: 4_000_000, desc: '4 Mbps • Compact' },
+              { label: 'Med', bps: 10_000_000, desc: '10 Mbps • Balanced default' },
+              { label: 'High', bps: 25_000_000, desc: '25 Mbps • Master quality' },
             ].map((tier) => {
-              const active = (config.video_bitrate_bps || 12_000_000) === tier.bps;
+              const active = (config.video_bitrate_bps || 10_000_000) === tier.bps;
               return (
                 <button
                   key={tier.label}
                   type="button"
                   onClick={() => updateConfig({ video_bitrate_bps: tier.bps })}
                   disabled={isRecording}
-                  className={`px-2 py-0.5 rounded text-[10px] font-semibold transition-all ${
+                  className={`px-2.5 py-0.5 rounded text-[10px] font-semibold transition-all ${
                     active
                       ? 'bg-amber-500/20 text-astral-amber border border-amber-500/50 shadow-sm'
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
-                  title={`${tier.label} encoding bitrate (${tier.bps / 1_000_000} Mbps)`}
+                  title={`${tier.label} (${tier.bps / 1_000_000} Mbps) - ${tier.desc}`}
                 >
                   {tier.label}
                 </button>

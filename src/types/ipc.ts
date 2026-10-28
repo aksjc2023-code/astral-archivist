@@ -21,7 +21,7 @@ export interface CaptureSource {
 
 export type TargetFramerate = 30 | 60;
 export type TargetResolutionScale = 1.0 | 0.75 | 0.5;
-export type VideoBitrateTier = 3000000 | 8000000 | 16000000 | 32000000;
+export type VideoBitrateTier = 4000000 | 10000000 | 25000000;
 
 export type ProjectionSnapPreset = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | 'custom';
 export type ProjectionMaskShape = 'mandala' | 'hexagon' | 'rounded';

@@ -89,7 +89,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => {
       fps: 60,
       resolution_scale: 1.0,
       output_format: 'mp4',
-      video_bitrate_bps: 12000000,
+      video_bitrate_bps: 10000000,
     },
     session: null,
     isRecording: false,
@@ -271,6 +271,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => {
           durationMs,
           isAudioOnly,
           fps: isAudioOnly ? 0 : (get().config.fps || 60),
+          videoBitrateBps: isAudioOnly ? null : (get().config.video_bitrate_bps || 10_000_000),
         });
       } else {
         item = await invoke<VaultItem>('stop_recording');
