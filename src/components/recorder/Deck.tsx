@@ -201,7 +201,7 @@ export const Deck: React.FC = () => {
 
           {/* Quality Bitrate Preset Selector */}
           <div className="flex items-center gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-700/50 backdrop-blur-sm">
-            <span className="text-[10px] text-slate-400 uppercase font-mono px-1">Fidelity:</span>
+            <span className="text-[10px] text-slate-400 uppercase font-mono px-1">Bitrate:</span>
             {[
               { label: 'Draft', bps: 3_000_000 },
               { label: 'Std', bps: 8_000_000 },
