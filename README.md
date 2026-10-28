@@ -143,72 +143,26 @@ A desktop-grade non-linear editor engineered for fluid, non-destructive storytel
 
 ---
 
-## 🔮 The Sovereign AI Production Workflow
+## 🔮 Sovereign AI Workflow (Edit Video Like Text)
 
-The Astral Archivist reimagines video editing by treating your spoken narrative as an interactive, synchronized document. Instead of squinting at multi-track audio peaks to find bad takes or cut points by eye, you edit video simply by reading, highlighting, and deleting words.
+Edit your video narrative seamlessly in three synchronized, 100% offline stages:
 
 ```mermaid
-flowchart TD
-    classDef input fill:#1e1b4b,stroke:#6366f1,stroke-width:2px,color:#e0e7ff;
-    classDef stage fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#f8fafc;
-    classDef action fill:#042f2e,stroke:#14b8a6,stroke-width:2px,color:#ccfbf1;
-    classDef output fill:#451a03,stroke:#f59e0b,stroke-width:2px,color:#fef3c7;
-
-    IN["🎙️ Raw Captured Audio/Video<br/>(48kHz Stereo & 60 FPS)"]:::input
-
-    subgraph S1 ["Stage 1: On-Device Speech-to-Text"]
-        WGPU["⚡ WebGPU INT8 Quantized Whisper<br/>(@huggingface/transformers)"]:::stage
-        TOKENS["📝 WordToken Stream<br/>(Sub-millisecond timestamps, speaker tags & confidence)"]:::stage
-    end
-
-    subgraph S2 ["Stage 2: Neural Audio Cleansing & Disfluency Detection"]
-        DENOISE["🎚️ Multi-Stage DSP Engine<br/>(Spectral gating & adaptive noise suppression)"]:::stage
-        FILLER["🔍 Disfluency & Silence Detection<br/>(Identifies 'um', 'uh', stuttered takes & pauses >0.5s)"]:::stage
-        DUCK["📉 Intelligent Audio Ducking<br/>(Automatically lowers BGM during dialogue)"]:::stage
-    end
-
-    subgraph S3 ["Stage 3: Transcript-Driven Ripple Slicing"]
-        UI["✂️ Interactive Transcript Editor<br/>(Click words to seek, highlight text to cut)"]:::action
-        MATH["📐 Argon ADR-001 Mathematical Coalescing<br/>(timelineEngine.ts pure piecewise-linear mapping <0.4ms)"]:::action
-        EDL["🎞️ Synchronized 7-Track Ripple Compaction<br/>(Video, Audio, Stickers, Titles & Filters)"]:::action
-    end
-
-    OUT["🚀 Instant Lossless Stream-Copy or WebCodecs MP4 Export"]:::output
-
-    IN --> WGPU --> TOKENS
-    IN --> DENOISE --> DUCK
-    TOKENS --> FILLER --> UI
-    UI --> MATH --> EDL --> OUT
+flowchart LR
+    A["🎙️ 1. Capture"] --> B["⚡ 2. Local Whisper ASR<br/>(WordToken Sync)"]
+    B --> C["🎚️ 3. Neural DSP Cleansing<br/>(Denoise & Fillers)"]
+    C --> D["✂️ 4. Text-Driven Cut<br/>(Delete Words)"]
+    D --> E["🚀 5. Instant Export<br/>(Stream-Copy / WebCodecs)"]
 ```
 
-### 1. ⚡ Stage 1: On-Device Speech-to-Text (Whisper ASR)
-- **Local WebGPU & WASM Acceleration**: Powered by `@huggingface/transformers`, running quantized INT8 ONNX models (`whisper-tiny.en` / `whisper-base.en`) directly on your workstation's GPU with zero external cloud dependencies.
-- **Word-Level Precision**: Every spoken syllable is indexed into an immutable, strongly-typed `WordToken` carrying sub-millisecond timestamps (`start`, `end`, `confidence`).
-- **100% Air-Gapped & Sovereign**: Audio buffers never leave your machine; no API keys, cloud subscriptions, or external network requests required.
-
-### 2. 🎚️ Stage 2: Neural Audio Cleansing & Disfluency Detection
-- **Multi-Stage Audio DSP**: Real-time spectral noise suppression, voice isolation, and de-reverberation clean room acoustics without robotic phasing artifacts.
-- **Automated Disfluency Classifier**: Scans the transcript stream to flag hard lexical fillers (*"um"*, *"uh"*, *"ah"*, *"er"*), discourse markers (*"like"*, *"basically"*), and dead air silences (>0.5s).
-- **Intelligent Audio Ducking**: Dynamically suppresses background music tracks by up to -18dB whenever speech frequencies are detected, ramping volume back smoothly during pauses.
-
-### 3. ✂️ Stage 3: Transcript-Driven Video Cutting (Edit Video Like Text)
-- **Document-Style Editing**: Click any word in the transcript to jump the playhead to that exact millisecond. 
-- **One-Click Filler Purge**: Click *"Purge All Fillers"* or select words with your mouse and press `Delete` / `Backspace`.
-- **Argon ADR-001 Mathematical Engine (`timelineEngine.ts`)**:
-  - Automatically executes pure interval coalescing with an 85ms micro-gap merging grace window (`EPSILON_MERGE_SEC`).
-  - Guards against hardware decoder hitches by pruning cuts smaller than 30ms (`MIN_SEGMENT_DURATION_SEC`).
-  - Ripples and compacts all 7 timeline tracks (`Video`, `Audio`, `Titles`, `Stickers`, `Effects`) synchronously in **<0.4ms**.
-- **Non-Destructive Safety Net**: Source recordings remain pristine in your local Vault; cuts can be undone (`Ctrl+Z`), recovered, or adjusted via interactive trim handles at any time.
-
-| Benchmark Metric | Target Performance | Measured Execution |
-| :--- | :---: | :---: |
-| **EDL Rebuild Latency (5,000+ words)** | `< 1.0 ms` | **0.34 ms** (Benchmarked) |
-| **Playhead Scrubbing Refresh Rate** | `60 FPS` | **60 FPS** (DOM Transform Bypassed) |
-| **Memory Overhead during Slicing** | `< 2 MB` | **~0.15 MB** (Pure Mathematical Mapping) |
-| **Transcription Privacy Leakage** | `0 bytes` | **0 bytes** (100% Local Inference) |
+| Stage | Process | Key Highlight |
+| :--- | :--- | :--- |
+| **1. Speech-to-Text** | Quantized INT8 Whisper via WebGPU/WASM | Generates word-level timestamps with **zero cloud latency or privacy leaks**. |
+| **2. Audio Cleansing** | Spectral gating & neural disfluency classification | Auto-flags filler sounds (*"um"*, *"uh"*, pauses >0.5s) and dynamically ducks background music. |
+| **3. Transcript Cutting** | Highlight text or click **"Purge All Fillers"** | Argon ADR-001 math engine ripples all 7 tracks in **<0.4ms** non-destructively. |
 
 > [!TIP]
-> **Pro Creator Workflow**: Record a long unscripted take, open the transcript, click **"Purge All Fillers"**, and skim through the text to delete any sentences where you hesitated. Your video is instantly tightened and pacing perfected in seconds—without touching a single razor blade tool.
+> **Pro Workflow**: Skim the transcript and press `Delete` on any hesitations or bad takes. The video tightens instantly across all 7 tracks without manual razor cuts.
 
 ---
 
