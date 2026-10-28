@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import {
   Eye, EyeOff, ScrollText, Play, Pause, RotateCcw,
-  Square, Radio, Volume2, Camera, CameraOff, ExternalLink,
+  Square, Radio, Volume2, Camera, CameraOff, X,
   Type, Bookmark, Sparkles, RefreshCw
 } from 'lucide-react';
 import { useRecorderStore, dispatchRecorderCommand } from '../../store/useRecorderStore';
@@ -64,12 +64,11 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
     }
   };
 
-  const popOutNativeWindow = async () => {
+  const closeGrimoireWindow = async () => {
     try {
-      await invoke('toggle_grimoire_window', { show: true });
+      await invoke('toggle_grimoire_window', { show: false });
+    } catch {
       if (onCloseInApp) onCloseInApp();
-    } catch (err) {
-      console.warn('Could not pop out native window:', err);
     }
   };
 
@@ -188,13 +187,13 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
             <span>{isExcluded ? 'Shield: ACTIVE' : 'Shield: VISIBLE'}</span>
           </button>
 
-          {/* Detach Native Window Button */}
+          {/* Close / Hide Window Button */}
           <button
-            onClick={popOutNativeWindow}
-            className="p-1 rounded hover:bg-white/10 text-slate-400 hover:text-astral-amber transition-colors"
-            title="Pop out into native borderless floating window"
+            onClick={closeGrimoireWindow}
+            className="p-1 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-300 transition-colors"
+            title="Close / Hide Invisible Grimoire Window"
           >
-            <ExternalLink className="h-3.5 w-3.5" />
+            <X className="h-3.5 w-3.5" />
           </button>
         </div>
       </div>

@@ -26,14 +26,27 @@ export const App: React.FC = () => {
   }, [fetchRecordings]);
 
   const toggleGrimoire = async () => {
-    const next = !showGrimoire;
-    setShowGrimoire(next);
     try {
-      await invoke('set_window_capture_affinity', { exclude: true });
-    } catch (e) {
-      console.warn('Affinity invoke:', e);
+      // Direct Native Launch: Directly open and focus native floating OS window
+      const isVisible = await invoke<boolean>('toggle_grimoire_window', { show: null });
+      setShowGrimoire(isVisible);
+    } catch {
+      // In web browser dev environment (non-Tauri), fallback to in-app overlay
+      setShowGrimoire((prev) => !prev);
     }
   };
+
+  // Global hotkey Ctrl+Shift+G to directly toggle Invisible Grimoire
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
+        e.preventDefault();
+        toggleGrimoire();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showGrimoire]);
 
   return (
     <div
