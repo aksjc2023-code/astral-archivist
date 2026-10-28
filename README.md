@@ -13,7 +13,9 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/editor-timeline.png" alt="The Astral Archivist Scarlet Multi-Track NLE Editor" width="100%">
+  <a href="docs/assets/editor-timeline.png">
+    <img src="docs/assets/editor-timeline.png" alt="The Astral Archivist Scarlet Multi-Track NLE Editor" width="100%">
+  </a>
 </p>
 
 ## 🔮 What is The Astral Archivist?
@@ -73,7 +75,9 @@ graph TB
 Capture every dimension of your workflow with ultra-low CPU overhead.
 
 <p align="center">
-  <img src="docs/assets/capture-studio.png" alt="Astrolabe Capture Studio Interface" width="90%">
+  <a href="docs/assets/capture-studio.png">
+    <img src="docs/assets/capture-studio.png" alt="Astrolabe Capture Studio Interface" width="100%">
+  </a>
 </p>
 
 - **Three Dedicated Capture Modes**:
@@ -91,7 +95,9 @@ Capture every dimension of your workflow with ultra-low CPU overhead.
 Keep your creative archive structured, indexed, and completely private on your local disk.
 
 <p align="center">
-  <img src="docs/assets/vault-library.png" alt="Astral Vault Library Interface" width="90%">
+  <a href="docs/assets/vault-library.png">
+    <img src="docs/assets/vault-library.png" alt="Astral Vault Library Interface" width="100%">
+  </a>
 </p>
 
 - **High-Density Media Cards**: Automatically generated video thumbnails, formatted duration stamps, creation dates, and type badges (Video vs. Audio).
@@ -109,7 +115,9 @@ Keep your creative archive structured, indexed, and completely private on your l
 A desktop-grade non-linear editor engineered for fluid, non-destructive storytelling.
 
 <p align="center">
-  <img src="docs/assets/editor-timeline.png" alt="Scarlet Multi-Track NLE Timeline" width="90%">
+  <a href="docs/assets/editor-timeline.png">
+    <img src="docs/assets/editor-timeline.png" alt="Scarlet Multi-Track NLE Timeline" width="100%">
+  </a>
 </p>
 
 - **7 Dedicated Editing Tracks**:
