@@ -35,37 +35,24 @@
 ## 🏛️ System Architecture
 
 ```mermaid
-graph TB
-    subgraph NativeOS ["🖥️ Native OS Shell (Rust & Tauri v2)"]
-        WIN32["Win32 DWM / GDI Window & Screen Enum"]
-        AFFINITY["WDA_EXCLUDEFROMCAPTURE (Invisible Prompter)"]
-        SQLITE["Embedded SQLite Vault (rusqlite)"]
-        FS["Zero-Copy Local Storage Pipeline"]
+flowchart LR
+    subgraph Native ["🦀 Native Shell (Tauri v2 + Rust)"]
+        direction TB
+        A["• Win32 DWM / GDI Capture & WDA Privacy<br/>• Embedded SQLite Vault Store (rusqlite)<br/>• Zero-Copy Local File System Pipeline"]
     end
 
-    subgraph ClientCore ["⚡ Multimedia & Audio Engine (Web APIs)"]
-        AUDIOMIX["Web Audio API Multi-Source Mixer (System + Mic)"]
-        VUMETER["Live Decibel (dB) Peak Metering"]
-        WEBCODECS["WebCodecs Hardware VideoEncoder / AudioEncoder"]
-        FFMPEG["FFmpeg WASM & mp4-muxer Export Pipeline"]
+    subgraph UI ["✨ Celestial UI (React 19 + Zustand)"]
+        direction TB
+        B["• Astrolabe Studio & Sacred Mandala Webcam<br/>• Vault Media Library & Bulk Purge<br/>• Scarlet 7-Track NLE (<0.4ms EDL Ripple)"]
     end
 
-    subgraph UserInterface ["✨ Celestial UI (React 19 + TypeScript + Tailwind)"]
-        STUDIO["Astrolabe Capture Deck & Sacred Mandala HUD"]
-        VAULT["Vault Archive Grid, Player Modal & Bulk Purge"]
-        SCARLET["Scarlet 7-Track NLE Timeline (<0.4ms EDL Engine)"]
-        WHISPER["On-Device Whisper AI Speech-to-Text (WebGPU INT8)"]
+    subgraph Engine ["⚡ Multimedia & AI Pipeline"]
+        direction TB
+        C["• Web Audio Dual Mixer (Live dB Meter)<br/>• WebCodecs HW VideoEncoder & mp4-muxer<br/>• WebGPU INT8 Whisper Inference"]
     end
 
-    WIN32 --> STUDIO
-    AFFINITY --> STUDIO
-    SQLITE <--> VAULT
-    FS <--> SCARLET
-    AUDIOMIX --> STUDIO
-    VUMETER --> STUDIO
-    WEBCODECS --> SCARLET
-    FFMPEG --> SCARLET
-    WHISPER --> SCARLET
+    Native <===>|Rust IPC / Zero-Copy| UI
+    UI <===>|EDL & Media Streams| Engine
 ```
 
 ---
