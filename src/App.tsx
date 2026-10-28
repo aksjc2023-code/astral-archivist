@@ -16,23 +16,23 @@ import logoImg from './assets/logo.jpg';
 
 export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'studio' | 'library' | 'editor'>('studio');
-  const [showGrimoire, setShowGrimoire] = useState<boolean>(false);
+  const [isGrimoireOpen, setIsGrimoireOpen] = useState<boolean>(false);
 
   const { recordings, selectedItem, fetchRecordings } = useVaultStore();
   const { edl } = useTimelineStore();
 
   useEffect(() => {
     fetchRecordings();
+    invoke<boolean>('is_grimoire_window_visible').then(setIsGrimoireOpen).catch(() => {});
   }, [fetchRecordings]);
 
   const toggleGrimoire = async () => {
     try {
       // Direct Native Launch: Directly open and focus native floating OS window
       const isVisible = await invoke<boolean>('toggle_grimoire_window', { show: null });
-      setShowGrimoire(isVisible);
-    } catch {
-      // In web browser dev environment (non-Tauri), fallback to in-app overlay
-      setShowGrimoire((prev) => !prev);
+      setIsGrimoireOpen(isVisible);
+    } catch (e) {
+      console.warn('Native grimoire toggle failed:', e);
     }
   };
 
@@ -46,7 +46,7 @@ export const App: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showGrimoire]);
+  }, []);
 
   return (
     <div
@@ -126,11 +126,11 @@ export const App: React.FC = () => {
           <button
             onClick={toggleGrimoire}
             className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold border transition-all ${
-              showGrimoire
+              isGrimoireOpen
                 ? 'bg-amber-500/20 text-astral-amber border-amber-500/50'
                 : 'bg-slate-900/60 text-slate-300 border-slate-700/60 hover:text-white hover:border-slate-500'
             }`}
-            title="Toggle Invisible Grimoire Teleprompter (Omitted from capture)"
+            title="Toggle Invisible Grimoire Teleprompter (Native floating window)"
           >
             <ScrollText className="h-3.5 w-3.5" />
             <span>Invisible Grimoire</span>
@@ -220,12 +220,6 @@ export const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Floating Invisible Grimoire Teleprompter Window (A3) */}
-      {showGrimoire && (
-        <div className="fixed top-16 right-6 z-40 w-[440px] h-[580px] rounded-2xl border border-amber-500/60 shadow-2xl overflow-hidden backdrop-blur-2xl">
-          <Notes onCloseInApp={() => setShowGrimoire(false)} />
-        </div>
-      )}
 
       {/* Astral Webcam Floating Projection Overlay (Only in Studio tab) */}
       {activeTab === 'studio' && <Webcam />}

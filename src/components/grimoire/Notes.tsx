@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   Eye, EyeOff, ScrollText, Play, Pause, RotateCcw,
   Square, Radio, Volume2, Camera, CameraOff, X,
-  Type, Bookmark, Sparkles, RefreshCw
+  Type, Bookmark, Sparkles, RefreshCw, ChevronUp, ChevronDown
 } from 'lucide-react';
 import { useRecorderStore, dispatchRecorderCommand } from '../../store/useRecorderStore';
 
@@ -43,6 +43,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
 
   const prompterRef = useRef<HTMLDivElement | null>(null);
   const scrollAnimRef = useRef<number | null>(null);
+  const scrollAccumulatorRef = useRef<number>(0);
 
   // Persist notes
   useEffect(() => {
@@ -72,7 +73,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
     }
   };
 
-  // Smooth continuous auto-scroll engine via requestAnimationFrame
+  // Recalibrated auto-prompter engine with sub-pixel accumulator
   useEffect(() => {
     let lastTimestamp = performance.now();
 
@@ -81,8 +82,10 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
       const delta = (timestamp - lastTimestamp) / 1000;
       lastTimestamp = timestamp;
 
-      const pixelsPerSecond = 24 * scrollSpeed;
-      prompterRef.current.scrollTop += pixelsPerSecond * delta;
+      // Base speed: 50 px/s multiplied by scrollSpeed (0.5x to 8.0x) = 25 px/s to 400 px/s
+      const pixelsPerSecond = 50 * scrollSpeed;
+      scrollAccumulatorRef.current += pixelsPerSecond * delta;
+      prompterRef.current.scrollTop = Math.round(scrollAccumulatorRef.current);
 
       const maxScroll = prompterRef.current.scrollHeight - prompterRef.current.clientHeight;
       if (maxScroll > 0) {
@@ -98,6 +101,9 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
     };
 
     if (isScrolling) {
+      if (prompterRef.current) {
+        scrollAccumulatorRef.current = prompterRef.current.scrollTop;
+      }
       lastTimestamp = performance.now();
       scrollAnimRef.current = requestAnimationFrame(stepScroll);
     } else {
@@ -109,13 +115,72 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
     };
   }, [isScrolling, scrollSpeed]);
 
+  // Sync scroll position during manual wheel, trackpad, or scrollbar dragging
+  const handlePrompterScroll = () => {
+    if (prompterRef.current) {
+      if (!isScrolling) {
+        scrollAccumulatorRef.current = prompterRef.current.scrollTop;
+      }
+      const maxScroll = prompterRef.current.scrollHeight - prompterRef.current.clientHeight;
+      if (maxScroll > 0) {
+        const progress = Math.min(100, Math.round((prompterRef.current.scrollTop / maxScroll) * 100));
+        setScrollProgress(progress);
+      }
+    }
+  };
+
+  // Manual scroll nudge helper
+  const nudgeScroll = (deltaPx: number) => {
+    if (prompterRef.current) {
+      prompterRef.current.scrollTop += deltaPx;
+      scrollAccumulatorRef.current = prompterRef.current.scrollTop;
+      const maxScroll = prompterRef.current.scrollHeight - prompterRef.current.clientHeight;
+      if (maxScroll > 0) {
+        const progress = Math.min(100, Math.round((prompterRef.current.scrollTop / maxScroll) * 100));
+        setScrollProgress(progress);
+      }
+    }
+  };
+
   const resetScroll = () => {
     setIsScrolling(false);
     if (prompterRef.current) {
       prompterRef.current.scrollTop = 0;
+      scrollAccumulatorRef.current = 0;
       setScrollProgress(0);
     }
   };
+
+  // Keyboard controls for prompter mode: Space to play/pause, Arrows/Page to scroll, Esc to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setIsScrolling((prev) => !prev);
+      } else if (e.code === 'ArrowDown') {
+        e.preventDefault();
+        nudgeScroll(80);
+      } else if (e.code === 'ArrowUp') {
+        e.preventDefault();
+        nudgeScroll(-80);
+      } else if (e.code === 'PageDown') {
+        e.preventDefault();
+        nudgeScroll(240);
+      } else if (e.code === 'PageUp') {
+        e.preventDefault();
+        nudgeScroll(-240);
+      } else if (e.code === 'Home') {
+        e.preventDefault();
+        resetScroll();
+      } else if (e.code === 'Escape') {
+        closeGrimoireWindow();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPrompterMode]);
 
   const handleRecordAction = async () => {
     if (!isRecording) {
@@ -162,7 +227,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
   const micNormalizedPercent = Math.max(0, Math.min(100, Math.round(((micLevelDb + 60) / 60) * 100)));
 
   return (
-    <div className="flex h-full w-full flex-col bg-slate-950/85 backdrop-blur-2xl text-slate-100 p-4 select-none border border-amber-500/40 rounded-2xl shadow-2xl overflow-hidden font-sans">
+    <div className="flex h-screen w-screen flex-col bg-slate-950/95 backdrop-blur-2xl text-slate-100 p-4 select-none border border-amber-500/40 shadow-2xl overflow-hidden font-sans box-border">
       {/* 1. Header: Grimoire Title, Privacy Shield & Window Controls */}
       <div className="flex items-center justify-between border-b border-amber-500/30 pb-2.5">
         <div className="flex items-center gap-2">
@@ -331,18 +396,37 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
           </button>
         </div>
 
-        {/* Scroll Speed & Auto-Scroll Play */}
+        {/* Scroll Speed, Manual Nudge & Auto-Scroll Play */}
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-[10px] text-slate-400">
-            <span>{scrollSpeed.toFixed(1)}x</span>
+          {/* Manual Scroll Nudge Buttons */}
+          <div className="flex items-center rounded bg-slate-900/80 border border-slate-800 p-0.5">
+            <button
+              onClick={() => nudgeScroll(-80)}
+              className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              title="Manual Scroll Up (Arrow Up / Page Up)"
+            >
+              <ChevronUp className="h-3 w-3" />
+            </button>
+            <button
+              onClick={() => nudgeScroll(80)}
+              className="p-1 rounded hover:bg-slate-800 text-slate-300 hover:text-white transition-colors"
+              title="Manual Scroll Down (Arrow Down / Page Down)"
+            >
+              <ChevronDown className="h-3 w-3" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span className="font-mono text-astral-amber font-semibold w-7 text-right">{scrollSpeed.toFixed(1)}x</span>
             <input
               type="range"
               min="0.5"
-              max="4.0"
+              max="8.0"
               step="0.5"
               value={scrollSpeed}
               onChange={(e) => setScrollSpeed(Number(e.target.value))}
-              className="accent-astral-amber h-1 w-14 cursor-pointer"
+              className="accent-astral-amber h-1 w-16 cursor-pointer"
+              title={`Scroll speed: ${scrollSpeed.toFixed(1)}x (${Math.round(50 * scrollSpeed)} px/s)`}
             />
           </div>
           <button
@@ -352,6 +436,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
                 ? 'bg-amber-400 text-slate-950 shadow-md shadow-amber-500/30'
                 : 'bg-astral-amber text-slate-950 hover:bg-amber-400'
             }`}
+            title="Space to play/pause scrolling"
           >
             {isScrolling ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3 fill-slate-950" />}
             <span>{isScrolling ? 'Pause' : 'Scroll'}</span>
@@ -359,7 +444,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
           <button
             onClick={resetScroll}
             className="p-1 rounded text-slate-400 hover:text-astral-amber transition-colors"
-            title="Reset Teleprompter to Top"
+            title="Reset Teleprompter to Top (Home)"
           >
             <RotateCcw className="h-3 w-3" />
           </button>
@@ -367,7 +452,7 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
       </div>
 
       {/* 4. Teleprompter Body Area */}
-      <div className="relative flex-1 my-2 overflow-hidden rounded-xl border border-amber-500/20 bg-black/40 backdrop-blur-sm">
+      <div className="relative flex-1 min-h-0 flex flex-col my-2 overflow-hidden rounded-xl border border-amber-500/20 bg-black/40 backdrop-blur-sm">
         {/* Subtle Eyeline Alignment Guide Wire (Only in prompter mode) */}
         {isPrompterMode && (
           <div className="absolute top-[28%] left-0 right-0 z-20 flex items-center justify-between px-3 pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
@@ -382,8 +467,9 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
         {isPrompterMode ? (
           <div
             ref={prompterRef}
+            onScroll={handlePrompterScroll}
             style={{ fontSize: `${fontSizePx}px` }}
-            className="h-full w-full overflow-y-auto p-5 font-sans leading-relaxed text-slate-100 scroll-smooth space-y-3"
+            className="flex-1 min-h-0 h-full w-full overflow-y-auto p-5 font-sans leading-relaxed text-slate-100 space-y-3 select-text"
           >
             {notes.split('\n').map((line, idx) => {
               const trimmed = line.trim();
@@ -423,8 +509,9 @@ export const Notes: React.FC<{ onCloseInApp?: () => void }> = ({ onCloseInApp })
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             style={{ fontSize: `${fontSizePx}px` }}
-            className="h-full w-full resize-none bg-transparent p-4 font-sans leading-relaxed text-slate-200 outline-none focus:ring-0"
+            className="flex-1 min-h-0 h-full w-full resize-none bg-transparent p-4 font-sans leading-relaxed text-slate-200 outline-none focus:ring-0 overflow-y-auto select-text"
             placeholder="Type or paste your incantations, presenter script, and cues here..."
+            spellCheck={false}
           />
         )}
       </div>
